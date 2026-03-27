@@ -4,14 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "saleor"
-version = "3.23.0-a.0"
+version = "3.24.0-a.0"
 description = "A modular, high performance, headless e-commerce platform built with Python, GraphQL, Django, and React."
 authors = [{ name = "Saleor Commerce", email = "hello@saleor.io" }]
 requires-python = ">=3.12,<3.13"
 readme = "README.md"
 license = "BSD-3-Clause"
 dependencies = [
-    "Adyen>=4.0.0,<5",
     "asgiref>=3.7.2,<4",
     "authlib>=1.6.9,<2",
     "authorizenet>=1.1.5,<2",
@@ -49,7 +48,6 @@ dependencies = [
     "petl==1.7.17",
     "phonenumberslite>=9.0.7,<10",
     "pillow>=12.1.1,<13",
-    "posuto>=2025.1.0,<2026",
     "prices~=1.0",
     "promise~=2.3",
     "pybars3>=0.9.7,<0.10",
