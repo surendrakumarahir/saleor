@@ -282,6 +282,7 @@ MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.middleware.common.CommonMiddleware",
     "saleor.core.middleware.jwt_refresh_token_middleware",
+    "corsheaders.middleware.CorsMiddleware",
 ]
 
 ENABLE_RESTRICT_WRITER_MIDDLEWARE = get_bool_from_env(
@@ -296,6 +297,7 @@ CELERY_RESTRICT_WRITER_METHOD = "saleor.core.db.connection.log_writer_usage"
 INSTALLED_APPS = [
     # External apps that need to go before django's
     "storages",
+    "corsheaders",
     # Django modules
     "django.contrib.contenttypes",
     "django.contrib.sites",
@@ -507,6 +509,33 @@ ALLOWED_HOSTS = get_list(os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1"))
 ALLOWED_GRAPHQL_ORIGINS: list[str] = get_list(
     os.environ.get("ALLOWED_GRAPHQL_ORIGINS", "*")
 )
+
+# CORS settings
+CORS_ALLOWED_ORIGINS = get_list(
+    os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:9000,http://127.0.0.1:3000,http://127.0.0.1:9000")
+)
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_METHODS = [
+    "DELETE",
+    "GET",
+    "OPTIONS",
+    "PATCH",
+    "POST",
+    "PUT",
+]
+CORS_ALLOW_HEADERS = [
+    "accept",
+    "accept-encoding",
+    "authorization",
+    "content-type",
+    "dnt",
+    "origin",
+    "user-agent",
+    "x-csrftoken",
+    "x-requested-with",
+    "source-service-name",
+    "authorization-bearer",
+]
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
