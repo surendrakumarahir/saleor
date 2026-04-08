@@ -12,6 +12,9 @@ class BannerErrorCode(graphene.Enum):
     BANNER_NOT_FOUND = "banner_not_found"
     INVALID_DATE_RANGE = "invalid_date_range"
     REQUIRED_FIELD_MISSING = "required_field_missing"
+    IMAGE_UPLOAD_ERROR = "image_upload_error"
+    IMAGE_NOT_FOUND = "image_not_found"
+    IMAGE_IN_USE = "image_in_use"
 
 
 class BannerError(graphene.ObjectType):

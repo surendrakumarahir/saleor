@@ -65,8 +65,9 @@ mutation CreateImageCollection(
 
 ### What to do next
 1. Save `imageCollection.id` from the response (example: `"3"`).
-2. Use that value as `collectionId` in `createBanner`.
-3. Query `imageCollection(id: "3")` or `imageCollections(...)` to verify it.
+2. Upload image with `uploadBannerImage` and save returned `fileKey`.
+3. Use `collectionId` + `imageKey` in `createBanner`.
+4. Query `imageCollection(id: "3")` or `imageCollections(...)` to verify it.
 
 ---
 
@@ -109,14 +110,66 @@ mutation UpdateImageCollection(
 
 ---
 
-## 3. Create Banner in Collection
+## 3. Upload Banner Image (First Step)
+
+`uploadBannerImage` uses multipart GraphQL upload and stores the file in media storage
+under `banners/` by default.
+
+### Mutation
+```graphql
+mutation UploadBannerImage($file: Upload!, $folder: String) {
+  uploadBannerImage(file: $file, folder: $folder) {
+    fileKey
+    uploadedFile {
+      url
+      contentType
+    }
+    errors {
+      field
+      message
+      code
+    }
+  }
+}
+```
+
+### Variables
+`$file` must be sent via GraphQL multipart request spec. Example variables:
+```json
+{
+  "file": null,
+  "folder": "banners/summer-2026"
+}
+```
+
+### Expected Response
+```json
+{
+  "data": {
+    "uploadBannerImage": {
+      "fileKey": "banners/summer-2026/sale_banner_a1b2c3d4.jpg",
+      "uploadedFile": {
+        "url": "https://your-domain/media/banners/summer-2026/sale_banner_a1b2c3d4.jpg",
+        "contentType": "image/jpeg"
+      },
+      "errors": []
+    }
+  }
+}
+```
+
+Save `fileKey` from this response and use it as `imageKey` in banner create/update.
+
+---
+
+## 4. Create Banner in Collection
 
 ### Mutation
 ```graphql
 mutation CreateBanner(
   $collectionId: ID!
   $title: String!
-  $image: String!
+  $imageKey: String!
   $description: String
   $altText: String
   $linkUrl: String
@@ -131,7 +184,7 @@ mutation CreateBanner(
   createBanner(
     collectionId: $collectionId
     title: $title
-    image: $image
+    imageKey: $imageKey
     description: $description
     altText: $altText
     linkUrl: $linkUrl
@@ -160,7 +213,7 @@ mutation CreateBanner(
 {
   "collectionId": "3",
   "title": "50% Off All Items",
-  "image": "/media/banners/summer_sale.jpg",
+  "imageKey": "banners/summer-2026/sale_banner_a1b2c3d4.jpg",
   "description": "Limited time offer - 50% off everything",
   "altText": "Summer sale banner 50% off",
   "linkUrl": "https://example.com/sale",
@@ -182,7 +235,7 @@ mutation CreateBanner(
       "banner": {
         "id": "1",
         "title": "50% Off All Items",
-        "image": "/media/banners/summer_sale.jpg",
+        "image": "https://your-domain/media/banners/summer-2026/sale_banner_a1b2c3d4.jpg",
         "isActive": true,
         "position": 1
       },
@@ -194,13 +247,14 @@ mutation CreateBanner(
 
 ---
 
-## 4. Update Banner
+## 5. Update Banner
 
 ### Mutation
 ```graphql
 mutation UpdateBanner(
   $id: ID!
   $title: String
+  $imageKey: String
   $description: String
   $linkUrl: String
   $linkText: String
@@ -209,6 +263,7 @@ mutation UpdateBanner(
   updateBanner(
     id: $id
     title: $title
+    imageKey: $imageKey
     description: $description
     linkUrl: $linkUrl
     linkText: $linkText
@@ -230,6 +285,7 @@ mutation UpdateBanner(
 {
   "id": "1",
   "title": "60% Off - Extended!",
+  "imageKey": "banners/summer-2026/sale_banner_v2_e5f6a7b8.jpg",
   "description": "Sale extended! Now 60% off all items",
   "linkUrl": "https://example.com/mega-sale",
   "linkText": "Shop Extended Sale",
@@ -239,7 +295,7 @@ mutation UpdateBanner(
 
 ---
 
-## 5. Delete Banner
+## 6. Delete Banner
 
 ### Mutation
 ```graphql
@@ -259,7 +315,36 @@ mutation DeleteBanner($id: ID!) {
 
 ---
 
-## 6. Delete Image Collection
+## 7. Delete Uploaded Banner Image
+
+Delete the physical file from storage. By default this mutation blocks deletion
+if the image is still referenced by banners.
+
+### Mutation
+```graphql
+mutation DeleteBannerImage($fileKey: String!, $force: Boolean) {
+  deleteBannerImage(fileKey: $fileKey, force: $force) {
+    success
+    errors {
+      field
+      message
+      code
+    }
+  }
+}
+```
+
+### Variables
+```json
+{
+  "fileKey": "banners/summer-2026/sale_banner_a1b2c3d4.jpg",
+  "force": false
+}
+```
+
+---
+
+## 8. Delete Image Collection
 
 ### Mutation
 ```graphql
@@ -279,7 +364,7 @@ mutation DeleteImageCollection($id: ID!) {
 
 ---
 
-## 7. Get ImageCollection Listing
+## 9. Get ImageCollection Listing
 
 Use `imageCollections` with the `filter` argument.
 
@@ -351,7 +436,7 @@ query GetImageCollections($filter: ImageCollectionFilterInput) {
 
 ---
 
-## 8. Query Collections with Banners
+## 10. Query Collections with Banners
 
 ### Query
 ```graphql
@@ -395,7 +480,7 @@ query GetImageCollectionsWithBanners($filter: ImageCollectionFilterInput) {
 
 ---
 
-## 9. Query Single Collection
+## 11. Query Single Collection
 
 ### Query
 ```graphql
@@ -427,6 +512,7 @@ query GetImageCollection($id: ID!) {
 - **Channel ID for `createImageCollection` input**: use global ID, e.g. `Q2hhbm5lbDox` (`Channel:1`)
 - **Collection IDs in responses / update / delete**: plain DB ID string, e.g. `"3"`
 - **Banner IDs in responses / update / delete**: plain DB ID string, e.g. `"1"`
+- **Banner image storage key**: use `uploadBannerImage.fileKey` (e.g. `banners/summer-2026/file.jpg`)
 
 ### Error Handling
 All mutations return an `errors` array:
@@ -462,4 +548,7 @@ Use ISO 8601 format for dates:
 | `Field 'id' expected a number` | Using base64 ID for collection/banner mutations | Use plain numeric string IDs returned by API (e.g. `"3"`, `"1"`) |
 | `Unknown argument "channel" on field "imageCollections"` | Wrong listing argument | Use `imageCollections(filter: {...})`, not `channel:` |
 | `Cannot query field "channel"` | Wrong field name | Use `channelId` instead of `channel { id name }` |
+| `IMAGE_UPLOAD_ERROR` | Invalid multipart payload or invalid file type | Ensure GraphQL multipart upload format and valid image MIME/extension |
+| `IMAGE_IN_USE` | Trying to delete file used by banner records | Remove/update dependent banners first or pass `force: true` |
+| `IMAGE_NOT_FOUND` | File key does not exist in storage | Verify exact `fileKey` from upload response |
 | `REQUIRED_FIELD_MISSING` | Missing required field | Check mutation Arguments section for required fields |

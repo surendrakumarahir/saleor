@@ -1,17 +1,55 @@
 """GraphQL mutations for banner management."""
 
+import posixpath
+
 import graphene
-from django.core.files.base import ContentFile
-from django.utils import timezone
+from django.core.exceptions import ValidationError
+from django.core.files.storage import default_storage
+from django.core.files.uploadedfile import UploadedFile
 from graphql import GraphQLError
 
 from saleor.banner.models import Banner, ImageCollection
 from saleor.channel.models import Channel
+from saleor.core.error_codes import UploadErrorCode
 from saleor.graphql.decorators import one_of_permissions_required
+from saleor.graphql.core.types import File, Upload
+from saleor.graphql.core.validators.file import validate_upload_file
 from saleor.graphql.banner_types import BannerType, ImageCollectionType
 from saleor.graphql.banner_errors import BannerError, BannerErrorCode
 from saleor.graphql.core.scalars import DateTime
-from saleor.graphql.core.utils import from_global_id_or_error
+from saleor.graphql.core.utils import add_hash_to_file_name, from_global_id_or_error
+
+
+BANNER_UPLOAD_ROOT_DIR = "banners"
+
+
+def _normalize_banner_folder(folder: str | None) -> str:
+    if not folder:
+        return BANNER_UPLOAD_ROOT_DIR
+
+    clean_folder = folder.strip().strip("/")
+    if clean_folder.startswith("media/"):
+        clean_folder = clean_folder[6:]
+    if not clean_folder:
+        return BANNER_UPLOAD_ROOT_DIR
+
+    normalized = posixpath.normpath(clean_folder)
+    if normalized in {".", ""} or normalized.startswith("../") or "/../" in normalized:
+        raise ValueError("Invalid folder path.")
+
+    if normalized == BANNER_UPLOAD_ROOT_DIR or normalized.startswith(
+        f"{BANNER_UPLOAD_ROOT_DIR}/"
+    ):
+        return normalized
+
+    return posixpath.join(BANNER_UPLOAD_ROOT_DIR, normalized)
+
+
+def _resolve_upload_from_request(info, file):
+    # GraphQL multipart uploads may arrive as FILES[file_key] or UploadedFile instance.
+    if isinstance(file, UploadedFile):
+        return file
+    return info.context.FILES[file]
 
 
 class CreateImageCollectionMutation(graphene.Mutation):
@@ -151,7 +189,13 @@ class CreateBannerMutation(graphene.Mutation):
         title = graphene.String(required=True, description="Banner title.")
         description = graphene.String(description="Banner description.")
         image = graphene.String(
-            required=True, description="Banner image (base64 or URL)."
+            description=(
+                "Deprecated. Banner image URL/path. Prefer `imageKey` from "
+                "`uploadBannerImage` mutation."
+            )
+        )
+        image_key = graphene.String(
+            description="Image storage key returned by `uploadBannerImage`."
         )
         alt_text = graphene.String(description="Image alt text.")
         link_url = graphene.String(description="Link URL.")
@@ -175,8 +219,9 @@ class CreateBannerMutation(graphene.Mutation):
         self,
         info,
         title,
-        image,
         collection_id,
+        image=None,
+        image_key=None,
         description=None,
         alt_text=None,
         link_url=None,
@@ -198,6 +243,15 @@ class CreateBannerMutation(graphene.Mutation):
                     code=BannerErrorCode.REQUIRED_FIELD_MISSING,
                     message="Title is required.",
                     field="title",
+                )
+            )
+
+        if not image_key and not image:
+            errors.append(
+                BannerError(
+                    code=BannerErrorCode.REQUIRED_FIELD_MISSING,
+                    message="Provide `imageKey` or deprecated `image` value.",
+                    field="image_key",
                 )
             )
 
@@ -241,8 +295,9 @@ class CreateBannerMutation(graphene.Mutation):
             end_date=end_date,
         )
 
-        # Handle image - In production, you'd handle file uploads properly
-        if image and isinstance(image, str) and image.startswith("http"):
+        if image_key:
+            banner.image = image_key
+        elif image and isinstance(image, str):
             banner.image = image
 
         banner.save()
@@ -259,6 +314,15 @@ class UpdateBannerMutation(graphene.Mutation):
         id = graphene.ID(required=True, description="Banner ID.")
         title = graphene.String(description="Banner title.")
         description = graphene.String(description="Banner description.")
+        image = graphene.String(
+            description=(
+                "Deprecated. Banner image URL/path. Prefer `imageKey` from "
+                "`uploadBannerImage` mutation."
+            )
+        )
+        image_key = graphene.String(
+            description="Image storage key returned by `uploadBannerImage`."
+        )
         alt_text = graphene.String(description="Image alt text.")
         link_url = graphene.String(description="Link URL.")
         link_text = graphene.String(description="Link text.")
@@ -280,6 +344,8 @@ class UpdateBannerMutation(graphene.Mutation):
         id,
         title=None,
         description=None,
+        image=None,
+        image_key=None,
         alt_text=None,
         link_url=None,
         link_text=None,
@@ -322,6 +388,10 @@ class UpdateBannerMutation(graphene.Mutation):
             banner.title = title
         if description is not None:
             banner.description = description
+        if image_key is not None:
+            banner.image = image_key
+        elif image is not None:
+            banner.image = image
         if alt_text is not None:
             banner.alt_text = alt_text
         if link_url is not None:
@@ -378,12 +448,131 @@ class DeleteBannerMutation(graphene.Mutation):
         return DeleteBannerMutation(success=True, errors=[])
 
 
+class UploadBannerImageMutation(graphene.Mutation):
+    """Upload banner image to storage."""
+
+    uploaded_file = graphene.Field(File)
+    file_key = graphene.String(description="Storage key of uploaded banner image.")
+    errors = graphene.List(BannerError, required=True)
+
+    class Arguments:
+        file = Upload(
+            required=True, description="Image file in a multipart request."
+        )
+        folder = graphene.String(
+            description=(
+                "Optional folder under media storage. If omitted uses `banners/`."
+            )
+        )
+
+    @one_of_permissions_required(["banner.manage_banners"])
+    def mutate(self, info, file, folder=None):
+        try:
+            file_data = _resolve_upload_from_request(info, file)
+            if not file_data:
+                raise ValidationError("Received an empty file.")
+            validate_upload_file(file_data, UploadErrorCode, "file")
+            add_hash_to_file_name(file_data)
+            target_dir = _normalize_banner_folder(folder)
+            storage_key = default_storage.save(
+                posixpath.join(target_dir, file_data.name), file_data.file
+            )
+            return UploadBannerImageMutation(
+                uploaded_file=File(
+                    url=storage_key,
+                    content_type=file_data.content_type,
+                ),
+                file_key=storage_key,
+                errors=[],
+            )
+        except (KeyError, ValidationError, ValueError) as exc:
+            return UploadBannerImageMutation(
+                uploaded_file=None,
+                file_key=None,
+                errors=[
+                    BannerError(
+                        code=BannerErrorCode.IMAGE_UPLOAD_ERROR,
+                        message=str(exc),
+                        field="file",
+                    )
+                ],
+            )
+
+
+class DeleteBannerImageMutation(graphene.Mutation):
+    """Delete uploaded banner image from storage."""
+
+    success = graphene.Boolean(required=True)
+    errors = graphene.List(BannerError, required=True)
+
+    class Arguments:
+        file_key = graphene.String(
+            required=True, description="Storage key returned by upload mutation."
+        )
+        force = graphene.Boolean(
+            default_value=False,
+            description=(
+                "Force deletion even if file key is referenced by banner records."
+            ),
+        )
+
+    @one_of_permissions_required(["banner.manage_banners"])
+    def mutate(self, info, file_key, force=False):
+        normalized_key = (file_key or "").strip().strip("/")
+        if not normalized_key.startswith(f"{BANNER_UPLOAD_ROOT_DIR}/"):
+            return DeleteBannerImageMutation(
+                success=False,
+                errors=[
+                    BannerError(
+                        code=BannerErrorCode.INVALID_BANNER_DATA,
+                        message=(
+                            "Only files inside `banners/` are supported for deletion."
+                        ),
+                        field="file_key",
+                    )
+                ],
+            )
+
+        in_use = Banner.objects.filter(image=normalized_key).exists()
+        if in_use and not force:
+            return DeleteBannerImageMutation(
+                success=False,
+                errors=[
+                    BannerError(
+                        code=BannerErrorCode.IMAGE_IN_USE,
+                        message=(
+                            "Image is still used by one or more banners. "
+                            "Pass `force: true` to delete anyway."
+                        ),
+                        field="file_key",
+                    )
+                ],
+            )
+
+        if not default_storage.exists(normalized_key):
+            return DeleteBannerImageMutation(
+                success=False,
+                errors=[
+                    BannerError(
+                        code=BannerErrorCode.IMAGE_NOT_FOUND,
+                        message="Image file not found.",
+                        field="file_key",
+                    )
+                ],
+            )
+
+        default_storage.delete(normalized_key)
+        return DeleteBannerImageMutation(success=True, errors=[])
+
+
 class BannerMutations(graphene.ObjectType):
     """Mutations for banner management."""
 
     create_image_collection = CreateImageCollectionMutation.Field()
     update_image_collection = UpdateImageCollectionMutation.Field()
     delete_image_collection = DeleteImageCollectionMutation.Field()
+    upload_banner_image = UploadBannerImageMutation.Field()
+    delete_banner_image = DeleteBannerImageMutation.Field()
     create_banner = CreateBannerMutation.Field()
     update_banner = UpdateBannerMutation.Field()
     delete_banner = DeleteBannerMutation.Field()

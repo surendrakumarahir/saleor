@@ -1,8 +1,10 @@
 """GraphQL types for banner management."""
 
 import graphene
+from django.core.files.storage import default_storage
 
 from saleor.banner.models import Banner, ImageCollection
+from saleor.core.utils import build_absolute_uri
 from saleor.graphql.core.connection import CountableConnection, create_connection_slice
 from saleor.graphql.core.fields import ConnectionField
 from saleor.graphql.core.descriptions import ADDED_IN_319
@@ -54,6 +56,17 @@ class BannerType(graphene.ObjectType):
 
     class Meta:
         description = f"Banner type. {ADDED_IN_319}"
+
+    @staticmethod
+    def resolve_image(root: Banner, _info):
+        if not root.image:
+            return None
+
+        image_name = str(root.image)
+        if image_name.startswith(("http://", "https://", "/media/")):
+            return image_name
+
+        return build_absolute_uri(default_storage.url(image_name))
 
 
 class ImageCollectionConnection(CountableConnection):
