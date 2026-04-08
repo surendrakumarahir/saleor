@@ -73,7 +73,7 @@ services:
     restart: unless-stopped
   
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.0.0
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.0
     container_name: saleor-elasticsearch-1
     environment:
       - discovery.type=single-node
