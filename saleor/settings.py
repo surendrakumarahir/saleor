@@ -588,6 +588,13 @@ AZURE_CONTAINER = os.environ.get("AZURE_CONTAINER")
 AZURE_CONTAINER_PRIVATE = os.environ.get("AZURE_CONTAINER_PRIVATE")
 AZURE_SSL = os.environ.get("AZURE_SSL")
 
+
+# Elasticsearch configuration
+ELASTICSEARCH_URL = "http://elasticsearch:9200"
+
+# Make sure this is set (usually already there)
+SEARCH_BACKEND = "saleor.search.backends.elasticsearch"
+
 # Replicate behavior of creating default values
 STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
