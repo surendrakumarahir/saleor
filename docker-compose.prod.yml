@@ -73,11 +73,12 @@ services:
     restart: unless-stopped
   
   elasticsearch:
-    image: blacktop/elasticsearch:7.17
+    image: opensearchproject/opensearch:1.3.0
     container_name: saleor-elasticsearch-1
     environment:
       - discovery.type=single-node
-      - "ES_JAVA_OPTS=-Xms256m -Xmx256m"
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=Admin@123
+      - DISABLE_SECURITY_PLUGIN=true
     ports:
       - "9200:9200"
     volumes:
