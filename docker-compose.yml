@@ -6,13 +6,16 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
+    env_file:
+      - .env
     environment:
       - DATABASE_URL=postgres://easypick:easypick786@db:5432/easypickbook
       - CELERY_BROKER_URL=redis://redis:6379/0
+      - CACHE_URL=redis://redis:6379/0
       - SECRET_KEY=your-dev-secret-key-change-in-prod
       - DEBUG=True
       - ALLOWED_HOSTS=localhost,127.0.0.1
-      - DEFAULT_FROM_EMAIL=noreply@example.com
+      - DEFAULT_FROM_EMAIL=noreply@easytopick.in
     depends_on:
       db:
         condition: service_healthy
@@ -33,6 +36,8 @@ services:
       context: .
       dockerfile: Dockerfile
     command: celery -A saleor worker -l info
+    env_file:
+      - .env
     environment:
       - DATABASE_URL=postgres://easypick:easypick786@db:5432/easypickbook
       - CELERY_BROKER_URL=redis://redis:6379/0
