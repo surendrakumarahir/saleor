@@ -9,16 +9,14 @@ services:
     env_file:
       - .env
     environment:
-      - DATABASE_URL=postgres://easypick:easypick786@db:5432/easypickbook
+      - DATABASE_URL=${DATABASE_URL}
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CACHE_URL=redis://redis:6379/0
       - SECRET_KEY=your-dev-secret-key-change-in-prod
       - DEBUG=True
-      - ALLOWED_HOSTS=localhost,127.0.0.1,0.0.0.0
+      - ALLOWED_HOSTS=localhost,127.0.0.1
       - DEFAULT_FROM_EMAIL=noreply@easytopick.in
     depends_on:
-      db:
-        condition: service_healthy
       redis:
         condition: service_healthy
     volumes:
@@ -39,25 +37,13 @@ services:
     env_file:
       - .env
     environment:
-      - DATABASE_URL=postgres://easypick:easypick786@db:5432/easypickbook
+      - DATABASE_URL=${DATABASE_URL}
       - CELERY_BROKER_URL=redis://redis:6379/0
       - SECRET_KEY=your-dev-secret-key-change-in-prod
     depends_on:
-      - db
       - redis
     volumes:
       - .:/app
-
-  db:
-    image: postgres:15-alpine
-    ports:
-      - "5431:5432" 
-    environment:
-      POSTGRES_DB: easypickbook
-      POSTGRES_USER: easypick
-      POSTGRES_PASSWORD: easypick786
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U easypick -d easypickbook"]
       interval: 10s
