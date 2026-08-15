@@ -14,7 +14,7 @@ services:
       - CACHE_URL=redis://redis:6379/0
       - SECRET_KEY=your-dev-secret-key-change-in-prod
       - DEBUG=True
-      - ALLOWED_HOSTS=localhost,127.0.0.1,0.0.0.0
+      - ALLOWED_HOSTS=localhost,127.0.0.1,0.0.0.0,api
       - DEFAULT_FROM_EMAIL=noreply@easytopick.in
     depends_on:
       db:
@@ -73,6 +73,20 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  telegram-notifier:
+    build:
+      context: .
+      dockerfile: Dockerfile.notifier
+    env_file:
+      - .env
+    environment:
+      - API_URL=http://api:8000/graphql/
+    depends_on:
+      - api
+    volumes:
+      - ./scripts:/app/scripts
+    restart: unless-stopped
 
 volumes:
   postgres_data:

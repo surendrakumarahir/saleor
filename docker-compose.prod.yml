@@ -84,6 +84,20 @@ services:
     volumes:
       - elasticsearch_data:/usr/share/elasticsearch/data
 
+  telegram-notifier:
+    build:
+      context: .
+      dockerfile: Dockerfile.notifier
+    env_file:
+      - .env.prod
+    environment:
+      - API_URL=http://api:8000/graphql/
+    depends_on:
+      - api
+    volumes:
+      - ./scripts:/app/scripts
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   redis_data:
