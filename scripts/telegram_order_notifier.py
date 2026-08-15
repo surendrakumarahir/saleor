@@ -268,7 +268,10 @@ def authenticate_saleor():
     req = urllib.request.Request(
         API_URL,
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "X-Forwarded-Proto": "https"
+        },
         method="POST"
     )
     with urllib.request.urlopen(req, timeout=15) as resp:
@@ -291,7 +294,11 @@ def execute_graphql(query, variables=None):
     if not AUTH_TOKEN:
         authenticate_saleor()
 
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {AUTH_TOKEN}"}
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {AUTH_TOKEN}",
+        "X-Forwarded-Proto": "https"
+    }
     payload = {"query": query, "variables": variables or {}}
 
     req = urllib.request.Request(API_URL, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
