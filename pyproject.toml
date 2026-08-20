@@ -66,6 +66,7 @@ dependencies = [
     "sendgrid>=6.7.1,<7",
     "sentry-sdk~=2.12",
     "stripe>=3.0.0,<4",
+    "reportlab>=5.0.0",
     "text-unidecode~=1.2",
     "urllib3>=2.4.0,<3",
     "uvicorn[standard]>=0.32.0,<0.33",
