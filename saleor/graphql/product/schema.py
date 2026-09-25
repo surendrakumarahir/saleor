@@ -60,6 +60,7 @@ from .filters.product import ProductFilterInput, ProductWhereInput
 from .filters.product_type import ProductTypeFilterInput
 from .filters.product_variant import ProductVariantFilterInput, ProductVariantWhereInput
 from .mutations import (
+    AmazonProductExtract,
     CategoryCreate,
     CategoryDelete,
     CategoryUpdate,
@@ -639,6 +640,7 @@ class ProductQueries(graphene.ObjectType):
 
 
 class ProductMutations(graphene.ObjectType):
+    amazon_product_extract = AmazonProductExtract.Field()
     product_attribute_assign = ProductAttributeAssign.Field()
     product_attribute_assignment_update = ProductAttributeAssignmentUpdate.Field()
     product_attribute_unassign = ProductAttributeUnassign.Field()
