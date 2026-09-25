@@ -12,6 +12,11 @@ from .plugins.views import (
     handle_plugin_per_channel_webhook,
     handle_plugin_webhook,
 )
+from .product.amazon_views import (
+    amazon_extract_view,
+    amazon_health_view,
+    amazon_image_proxy_view,
+)
 from .thumbnail.views import handle_original_image, handle_thumbnail
 
 urlpatterns = [
@@ -19,6 +24,21 @@ urlpatterns = [
         r"^graphql/$",
         csrf_exempt(GraphQLView.as_view(backend=backend, schema=schema)),
         name="api",
+    ),
+    re_path(
+        r"^api/amazon-extract/?$",
+        amazon_extract_view,
+        name="amazon-extract",
+    ),
+    re_path(
+        r"^api/amazon-image-proxy/?$",
+        amazon_image_proxy_view,
+        name="amazon-image-proxy",
+    ),
+    re_path(
+        r"^api/amazon-health/?$",
+        amazon_health_view,
+        name="amazon-health",
     ),
     re_path(
         r"^plugins/channel/(?P<channel_slug>[.0-9A-Za-z_\-]+)/"
