@@ -1,3 +1,4 @@
+from .amazon import AmazonProductExtract
 from .category import CategoryCreate, CategoryDelete, CategoryUpdate
 from .collection import (
     CollectionAddProducts,
@@ -29,6 +30,7 @@ from .product_variant import (
 )
 
 __all__ = [
+    "AmazonProductExtract",
     "ProductTypeCreate",
     "ProductTypeUpdate",
     "ProductTypeDelete",

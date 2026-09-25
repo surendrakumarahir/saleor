@@ -1,0 +1,65 @@
+services:
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CACHE_URL=redis://redis:6379/0
+      - SECRET_KEY=your-dev-secret-key-change-in-prod
+      - DEBUG=True
+      - ALLOWED_HOSTS=localhost,127.0.0.1
+      - DEFAULT_FROM_EMAIL=noreply@easytopick.in
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app
+      - ./media:/app/media
+    command: >
+      sh -c "
+      python manage.py migrate &&
+      python manage.py collectstatic --noinput &&
+      python manage.py runserver 0.0.0.0:8000
+      "
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: celery -A saleor worker -l info
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - SECRET_KEY=your-dev-secret-key-change-in-prod
+    depends_on:
+      - redis
+    volumes:
+      - .:/app
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U easypick -d easypickbook"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  redis_data:
