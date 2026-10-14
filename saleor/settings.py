@@ -282,6 +282,7 @@ MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.middleware.common.CommonMiddleware",
     "saleor.core.middleware.jwt_refresh_token_middleware",
+    "corsheaders.middleware.CorsMiddleware",
 ]
 
 ENABLE_RESTRICT_WRITER_MIDDLEWARE = get_bool_from_env(
@@ -295,7 +296,9 @@ CELERY_RESTRICT_WRITER_METHOD = "saleor.core.db.connection.log_writer_usage"
 
 INSTALLED_APPS = [
     # External apps that need to go before django's
+    "saleor.banner",
     "storages",
+    "corsheaders",
     # Django modules
     "django.contrib.contenttypes",
     "django.contrib.sites",
@@ -508,6 +511,33 @@ ALLOWED_GRAPHQL_ORIGINS: list[str] = get_list(
     os.environ.get("ALLOWED_GRAPHQL_ORIGINS", "*")
 )
 
+# CORS settings
+CORS_ALLOWED_ORIGINS = get_list(
+    os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:9000,http://127.0.0.1:3000,http://127.0.0.1:9000")
+)
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_METHODS = [
+    "DELETE",
+    "GET",
+    "OPTIONS",
+    "PATCH",
+    "POST",
+    "PUT",
+]
+CORS_ALLOW_HEADERS = [
+    "accept",
+    "accept-encoding",
+    "authorization",
+    "content-type",
+    "dnt",
+    "origin",
+    "user-agent",
+    "x-csrftoken",
+    "x-requested-with",
+    "source-service-name",
+    "authorization-bearer",
+]
+
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 # Amazon S3 configuration
@@ -557,6 +587,13 @@ AZURE_ACCOUNT_KEY = os.environ.get("AZURE_ACCOUNT_KEY")
 AZURE_CONTAINER = os.environ.get("AZURE_CONTAINER")
 AZURE_CONTAINER_PRIVATE = os.environ.get("AZURE_CONTAINER_PRIVATE")
 AZURE_SSL = os.environ.get("AZURE_SSL")
+
+
+# Elasticsearch configuration
+ELASTICSEARCH_URL = "http://elasticsearch:9200"
+
+# Make sure this is set (usually already there)
+SEARCH_BACKEND = "saleor.search.backends.elasticsearch"
 
 # Replicate behavior of creating default values
 STORAGES = {
@@ -891,13 +928,13 @@ BUILTIN_PLUGINS = [
     "saleor.payment.gateways.stripe.plugin.StripeGatewayPlugin",
     "saleor.payment.gateways.braintree.plugin.DeprecatedBraintreeGatewayPlugin",
     "saleor.payment.gateways.razorpay.plugin.DeprecatedRazorpayGatewayPlugin",
-    "saleor.payment.gateways.adyen.plugin.AdyenGatewayPlugin",
     "saleor.payment.gateways.authorize_net.plugin.AuthorizeNetGatewayPlugin",
-    "saleor.payment.gateways.np_atobarai.plugin.NPAtobaraiGatewayPlugin",
+    "saleor.payment.gateways.cod.plugin.CODGatewayPlugin",
     "saleor.plugins.user_email.plugin.UserEmailPlugin",
     "saleor.plugins.admin_email.plugin.AdminEmailPlugin",
     "saleor.plugins.sendgrid.plugin.DeprecatedSendgridEmailPlugin",
     "saleor.plugins.openid_connect.plugin.OpenIDConnectPlugin",
+    "saleor.plugins.dummy_invoice.plugin.DummyInvoicePlugin",
 ]
 
 # Plugin discovery
@@ -1060,6 +1097,8 @@ AUTOMATIC_CHECKOUT_COMPLETION_QUEUE_NAME = os.environ.get(
 DATA_MIGRATIONS_TASKS_QUEUE_NAME = os.environ.get(
     "DATA_MIGRATIONS_TASKS_QUEUE_NAME", None
 )
+
+FETCH_IMAGES_QUEUE_NAME = os.environ.get("FETCH_IMAGES_QUEUE_NAME", None)
 
 # Lock time for request password reset mutation per user (seconds)
 RESET_PASSWORD_LOCK_TIME = parse(
