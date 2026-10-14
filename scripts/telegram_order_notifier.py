@@ -22,21 +22,30 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-# Load .env file manually or via dotenv if available
-ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
-
-def load_env(path):
+def load_env():
     config = {}
-    if path.exists():
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, val = line.split("=", 1)
-                    config[key.strip()] = val.strip().strip("\"'")
+    candidate_paths = [
+        Path(__file__).resolve().parent.parent / ".env",
+        Path(__file__).resolve().parent.parent / ".env.prod",
+        Path(__file__).resolve().parent / ".env",
+        Path(__file__).resolve().parent / ".env.prod",
+        Path("/app/.env"),
+        Path("/app/.env.prod"),
+    ]
+    for path in candidate_paths:
+        if path.exists():
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            key, val = line.split("=", 1)
+                            config[key.strip()] = val.strip().strip("\"'")
+            except Exception:
+                pass
     return config
 
-ENV = load_env(ENV_PATH)
+ENV = load_env()
 
 API_URL = os.getenv("API_URL", ENV.get("API_URL", "https://api.easytopick.in/graphql/"))
 BASE_URL = os.getenv("BASE_URL", ENV.get("BASE_URL", "http://localhost:9000/")).rstrip("/")
