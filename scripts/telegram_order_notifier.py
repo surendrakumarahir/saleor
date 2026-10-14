@@ -8,6 +8,7 @@ import os
 import sys
 import json
 import time
+import base64
 import urllib.request
 import urllib.parse
 from datetime import datetime, timezone, timedelta
@@ -68,7 +69,7 @@ mutation CreateToken($email: String!, $password: String!) {
 
 ORDERS_QUERY = """
 query GetRecentOrders {
-  orders(first: 10, sortBy: { field: CREATION_DATE, direction: DESC }) {
+  orders(first: 20, sortBy: { field: CREATION_DATE, direction: DESC }) {
     edges {
       node {
         id
@@ -251,6 +252,44 @@ def format_order_message(order):
 """
     return msg.strip()
 
+def is_jwt_valid(token, buffer_seconds=60):
+    """Check if the JWT token is non-empty and has not expired."""
+    if not token:
+        return False
+    try:
+        parts = token.split(".")
+        if len(parts) < 2:
+            return False
+        padding = "=" * (4 - len(parts[1]) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(parts[1] + padding).decode("utf-8"))
+        exp = payload.get("exp")
+        if exp and (time.time() >= exp - buffer_seconds):
+            return False
+        return True
+    except Exception:
+        return False
+
+def is_authentication_error(errors, http_code=None):
+    """Detect if Saleor returned a token expiration or permission error."""
+    if http_code in (401, 403):
+        return True
+    for err in errors:
+        msg = str(err.get("message", "")).lower()
+        code = str(err.get("extensions", {}).get("exception", {}).get("code", "")).lower()
+        if any(keyword in msg for keyword in [
+            "permission",
+            "manage_orders",
+            "unauthorized",
+            "not authorized",
+            "authenticated",
+            "expired",
+            "signature",
+            "invalid token",
+            "forbidden",
+        ]) or code in ["permissiondenied", "unauthorized"]:
+            return True
+    return False
+
 def authenticate_saleor():
     global AUTH_TOKEN, REFRESH_TOKEN
     if APP_TOKEN:
@@ -260,7 +299,8 @@ def authenticate_saleor():
     if not STAFF_EMAIL or not STAFF_PASSWORD:
         raise ValueError("Saleor credentials missing. Set SALEOR_STAFF_EMAIL & SALEOR_STAFF_PASSWORD in .env")
 
-    print(f"🔐 Logging into Saleor as: {STAFF_EMAIL}...")
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{now_str}] 🔐 Authenticating with Saleor as: {STAFF_EMAIL}...")
     payload = {
         "query": TOKEN_CREATE_MUTATION,
         "variables": {"email": STAFF_EMAIL, "password": STAFF_PASSWORD},
@@ -270,6 +310,7 @@ def authenticate_saleor():
         data=json.dumps(payload).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
+            "User-Agent": "Saleor-Order-Notifier/1.0",
             "X-Forwarded-Proto": "https"
         },
         method="POST"
@@ -286,45 +327,49 @@ def authenticate_saleor():
 
     AUTH_TOKEN = token_data.get("token")
     REFRESH_TOKEN = token_data.get("refreshToken")
-    print("✅ Successfully authenticated with Saleor API!")
+    print(f"[{now_str}] ✅ Successfully authenticated with Saleor API!")
     return AUTH_TOKEN
 
-def execute_graphql(query, variables=None):
+def execute_graphql(query, variables=None, retry_auth=True):
     global AUTH_TOKEN
-    if not AUTH_TOKEN:
+    # Proactively check token validity and refresh before making the request
+    if not AUTH_TOKEN or not is_jwt_valid(AUTH_TOKEN):
         authenticate_saleor()
 
     headers = {
         "Content-Type": "application/json",
+        "User-Agent": "Saleor-Order-Notifier/1.0",
         "Authorization": f"Bearer {AUTH_TOKEN}",
         "X-Forwarded-Proto": "https"
     }
     payload = {"query": query, "variables": variables or {}}
 
     req = urllib.request.Request(API_URL, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+    http_code = 200
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
-        data = json.loads(e.read().decode("utf-8"))
+        http_code = e.code
+        raw_body = e.read().decode("utf-8", errors="replace")
+        try:
+            data = json.loads(raw_body)
+        except Exception:
+            data = {"errors": [{"message": f"HTTP {e.code}: {raw_body[:200]}"}]}
+    except Exception as e:
+        raise RuntimeError(f"Network error querying Saleor: {e}")
 
-    # Check for expired token
-    is_auth_error = any(
-        "expired" in str(err.get("message", "")).lower() or
-        "signature" in str(err.get("message", "")).lower()
-        for err in data.get("errors", [])
-    )
-
-    if is_auth_error:
-        print("🔄 Token expired or unauthorized. Refreshing authentication...")
+    errors = data.get("errors", [])
+    # If permission/token error occurred, automatically refresh authentication and retry once
+    if errors and retry_auth and is_authentication_error(errors, http_code):
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[{now_str}] 🔄 Token expired or permission error detected. Refreshing authentication...")
+        AUTH_TOKEN = ""
         authenticate_saleor()
-        headers["Authorization"] = f"Bearer {AUTH_TOKEN}"
-        req = urllib.request.Request(API_URL, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        return execute_graphql(query, variables=variables, retry_auth=False)
 
-    if data.get("errors"):
-        raise RuntimeError(f"GraphQL Query Error: {data['errors'][0]['message']}")
+    if errors:
+        raise RuntimeError(f"GraphQL Query Error: {errors[0]['message']}")
 
     return data.get("data", {})
 
@@ -343,30 +388,34 @@ def check_new_orders(state, is_first_run=False):
             state["lastSeenOrderNumber"] = latest["number"]
             state["processedOrderIds"] = [o["id"] for o in orders]
             save_state(state)
-            print(f"📌 Initialized tracker. Latest order in store is #{latest['number']}. Watching for NEW orders now...")
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[{now_str}] 📌 Initialized tracker. Latest order in store is #{latest['number']}. Watching for NEW orders now...")
             return
 
         processed_set = set(state.get("processedOrderIds", []))
         new_orders = [o for o in orders if o["id"] not in processed_set]
 
         if new_orders:
-            print(f"🔔 Found {len(new_orders)} new order(s)! Sending notifications...")
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[{now_str}] 🔔 Found {len(new_orders)} new order(s)! Sending notifications...")
             new_orders.reverse()
 
             for order in new_orders:
-                print(f"📤 Sending Telegram notification for Order #{order.get('number')}...")
+                print(f"[{now_str}] 📤 Sending Telegram notification for Order #{order.get('number')}...")
                 msg = format_order_message(order)
                 send_telegram_message(msg)
 
                 processed_set.add(order["id"])
                 state["lastSeenOrderId"] = order["id"]
                 state["lastSeenOrderNumber"] = order.get("number")
+                time.sleep(0.3)  # Gentle delay to adhere to Telegram rate limits
 
             state["processedOrderIds"] = list(processed_set)[-200:]
             save_state(state)
-            print("✅ All new order notifications sent successfully!")
+            print(f"[{now_str}] ✅ All new order notifications sent successfully!")
     except Exception as e:
-        print(f"❌ Error checking orders: {e}")
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[{now_str}] ❌ Error checking orders: {e}")
 
 def run_test():
     print("\n🧪 Running Telegram Notification Test (Python)...")
@@ -424,7 +473,7 @@ def run_test():
     except Exception as e:
         print(f"\n❌ Failed to send Telegram message: {e}")
 
-def start_watcher():
+def start_watcher(sync_latest=False):
     print("\n🚀 Starting Saleor Telegram Order Notifier (Python)...")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     print(f"• Saleor API: {API_URL}")
@@ -432,6 +481,8 @@ def start_watcher():
     print(f"• Check Interval: {POLL_INTERVAL} seconds")
     print(f"• Telegram Bot: {'Configured' if BOT_TOKEN else 'Missing'}")
     print(f"• Telegram Chat IDs ({len(CHAT_IDS)}): {', '.join(CHAT_IDS) or 'Missing'}")
+    if sync_latest:
+        print("• Sync Mode: --sync-latest (Skipping backlog orders, watching from current latest)")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 
     if not BOT_TOKEN or not CHAT_IDS:
@@ -439,6 +490,9 @@ def start_watcher():
         sys.exit(1)
 
     state = load_state()
+    if sync_latest:
+        # Reset state so it initializes to the current latest order
+        state = {"lastSeenOrderId": None, "lastSeenOrderNumber": None, "processedOrderIds": []}
 
     try:
         authenticate_saleor()
@@ -511,5 +565,7 @@ if __name__ == "__main__":
         run_test()
     elif "--get-group-id" in sys.argv or "--find-id" in sys.argv or "--groups" in sys.argv:
         find_group_ids()
+    elif "--sync-latest" in sys.argv or "--latest-only" in sys.argv or "--reset" in sys.argv:
+        start_watcher(sync_latest=True)
     else:
         start_watcher()
