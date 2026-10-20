@@ -9,13 +9,89 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
+import os
+
 logger = logging.getLogger(__name__)
 
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+# Profiles with matched Client Hints and User-Agents to prevent bot detection
+BROWSER_PROFILES = [
+    {
+        "name": "Chrome-Windows",
+        "headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            ),
+            "Accept": (
+                "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,"
+                "image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
+            ),
+            "Accept-Language": "en-IN,en-GB;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Accept-Encoding": "gzip, deflate",
+            "Referer": "https://www.amazon.in/",
+            "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-User": "?1",
+            "Upgrade-Insecure-Requests": "1",
+        },
+    },
+    {
+        "name": "Chrome-Mac",
+        "headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            ),
+            "Accept": (
+                "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,"
+                "image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
+            ),
+            "Accept-Language": "en-IN,en;q=0.9,en-US;q=0.8",
+            "Accept-Encoding": "gzip, deflate",
+            "Referer": "https://www.google.com/",
+            "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"macOS"',
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "cross-site",
+            "Sec-Fetch-User": "?1",
+            "Upgrade-Insecure-Requests": "1",
+        },
+    },
+    {
+        "name": "Firefox-Windows",
+        "headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) "
+                "Gecko/20100101 Firefox/133.0"
+            ),
+            "Accept": (
+                "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,"
+                "image/webp,*/*;q=0.8"
+            ),
+            "Accept-Language": "en-IN,en;q=0.8,en-US;q=0.5",
+            "Accept-Encoding": "gzip, deflate",
+            "Referer": "https://www.google.com/",
+            "Upgrade-Insecure-Requests": "1",
+        },
+    },
+    {
+        "name": "Safari-iPhone",
+        "headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) "
+                "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-IN,en;q=0.9",
+            "Referer": "https://www.amazon.in/",
+        },
+    },
 ]
 
 IGNORE_AUTHOR_WORDS = {
@@ -30,6 +106,42 @@ IGNORE_AUTHOR_WORDS = {
     "format",
     "edition",
 }
+
+
+def is_valid_author(cand: Optional[str]) -> bool:
+    if not cand:
+        return False
+    lower = cand.lower().strip()
+    if lower in IGNORE_AUTHOR_WORDS:
+        return False
+    invalid_phrases = [
+        "see updates",
+        "followed author",
+        "your books",
+        "follow",
+        "visit amazon",
+        "kindle edition",
+        "paperback",
+        "hardcover",
+        "audiobook",
+    ]
+    if any(phrase in lower for phrase in invalid_phrases):
+        return False
+    return True
+
+
+def is_amazon_captcha(html_text: Optional[str]) -> bool:
+    if not html_text:
+        return True
+    lower = html_text.lower()
+    return (
+        "validatecaptcha" in lower
+        or "type the characters you see in this image" in lower
+        or "enter the characters you see below" in lower
+        or "robot check" in lower
+        or "api-services-support@amazon.com" in lower
+        or ('<title dir="ltr">amazon.in</title>' in lower and 'id="producttitle"' not in lower)
+    )
 
 
 def clean_text(text: Optional[str]) -> str:
@@ -79,43 +191,76 @@ def normalize_amazon_url(input_str: str) -> str:
 
 
 def fetch_amazon_page(url: str, timeout: int = 15) -> Tuple[str, str]:
-    session = requests.Session()
-    ua = random.choice(USER_AGENTS)
-    headers = {
-        "User-Agent": ua,
-        "Accept": (
-            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,"
-            "image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
-        ),
-        "Accept-Language": "en-IN,en-GB;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache",
-        "DNT": "1",
-        "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Sec-Fetch-User": "?1",
-        "Sec-Ch-Ua": '"Google Chrome";v="125", "Chromium";v="125", "Not.A/Brand";v="24"',
-        "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Platform": '"Windows"',
-    }
+    proxy_url = os.environ.get("AMAZON_SCRAPER_PROXY") or os.environ.get("SCRAPER_PROXY_URL")
+    proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
 
-    resp = session.get(
-        url,
-        headers=headers,
-        timeout=timeout,
-        allow_redirects=True,
+    last_error: Optional[Exception] = None
+
+    for profile in BROWSER_PROFILES:
+        session = requests.Session()
+        if proxies:
+            session.proxies.update(proxies)
+
+        headers = profile["headers"]
+        ua = headers["User-Agent"]
+
+        try:
+            # Pre-warm session to obtain essential Amazon session cookies
+            try:
+                session.get(
+                    "https://www.amazon.in",
+                    headers={
+                        "User-Agent": ua,
+                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                        "Referer": "https://www.google.com/",
+                    },
+                    timeout=min(timeout, 6),
+                    allow_redirects=True,
+                )
+            except Exception:
+                pass  # Warmup is opportunistic; proceed if it fails
+
+            resp = session.get(
+                url,
+                headers=headers,
+                timeout=timeout,
+                allow_redirects=True,
+            )
+            resp.raise_for_status()
+
+            if is_amazon_captcha(resp.text):
+                logger.warning(
+                    f"Amazon CAPTCHA detected for {url} using profile {profile['name']}. Retrying with next profile..."
+                )
+                continue
+
+            return resp.text, str(resp.url)
+
+        except Exception as e:
+            logger.warning(
+                f"Scraper attempt failed for {url} with profile {profile['name']}: {e}"
+            )
+            last_error = e
+
+    if last_error:
+        raise RuntimeError(
+            f"Failed to fetch Amazon product page. Amazon anti-bot security or network blocked requests: {last_error}"
+        )
+    raise RuntimeError(
+        "Amazon Anti-Bot Verification (CAPTCHA) blocked all requests. "
+        "Server IP may be rate-limited by Amazon. Please set AMAZON_SCRAPER_PROXY or retry shortly."
     )
-    resp.raise_for_status()
-    final_url = str(resp.url)
-    return resp.text, final_url
 
 
 def parse_amazon_product(
     html: str, source_url: str, final_url: str = ""
 ) -> Dict[str, Any]:
+    if is_amazon_captcha(html):
+        raise RuntimeError(
+            "Amazon anti-bot security (CAPTCHA) was returned instead of product page. "
+            "Please configure AMAZON_SCRAPER_PROXY or retry."
+        )
+
     url_to_examine = final_url or source_url
     asin = (
         extract_asin_from_url(url_to_examine)
@@ -163,7 +308,7 @@ def parse_amazon_product(
     if title_m:
         title = clean_text(title_m.group(1))
     else:
-        raw_t = re.search(r"<title>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
+        raw_t = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
         if raw_t:
             title = clean_text(raw_t.group(1))
             title = re.sub(
@@ -187,13 +332,13 @@ def parse_amazon_product(
         if a_tag:
             cand = clean_text(a_tag.group(1))
             cand_clean = re.sub(r"\(Author\)", "", cand, flags=re.IGNORECASE).strip()
-            if cand_clean and cand_clean.lower() not in IGNORE_AUTHOR_WORDS:
+            if is_valid_author(cand_clean):
                 author = cand_clean
                 break
         else:
             cand = clean_text(span_content)
             cand_clean = re.sub(r"\(Author\)", "", cand, flags=re.IGNORECASE).strip()
-            if cand_clean and cand_clean.lower() not in IGNORE_AUTHOR_WORDS:
+            if is_valid_author(cand_clean):
                 author = cand_clean
                 break
 
@@ -213,7 +358,7 @@ def parse_amazon_product(
             ) or re.search(r"by\s+<a[^>]*>(.*?)</a>", by_text, re.IGNORECASE | re.DOTALL)
             if by_link:
                 cand = clean_text(by_link.group(1))
-                if cand and cand.lower() not in IGNORE_AUTHOR_WORDS:
+                if is_valid_author(cand):
                     author = cand
 
     # Pattern C: contributorNameID everywhere
@@ -225,7 +370,7 @@ def parse_amazon_product(
         )
         if contrib_m:
             cand = clean_text(contrib_m.group(1))
-            if cand and cand.lower() not in IGNORE_AUTHOR_WORDS:
+            if is_valid_author(cand):
                 author = cand
 
     # 3. Price & MRP Extraction
@@ -544,10 +689,13 @@ def parse_amazon_product(
 
 
 def proxy_amazon_image(image_url: str, timeout: int = 10) -> Tuple[bytes, str]:
+    proxy_url = os.environ.get("AMAZON_SCRAPER_PROXY") or os.environ.get("SCRAPER_PROXY_URL")
+    proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
+
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         ),
         "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
         "Referer": "https://www.amazon.in/",
@@ -555,6 +703,7 @@ def proxy_amazon_image(image_url: str, timeout: int = 10) -> Tuple[bytes, str]:
     resp = requests.get(
         image_url,
         headers=headers,
+        proxies=proxies,
         timeout=timeout,
         allow_redirects=True,
     )
