@@ -188,6 +188,23 @@ def normalize_amazon_url(input_str: str) -> str:
 
 
 def fetch_amazon_page(url: str, timeout: int = 15) -> Tuple[str, str]:
+    # 0. Check for ScraperAPI key (direct residential unblocker)
+    scraperapi_key = (
+        os.environ.get("SCRAPERAPI_KEY")
+        or os.environ.get("SCRAPER_API_KEY")
+        or os.environ.get("AMAZON_SCRAPER_API_KEY")
+    )
+    if scraperapi_key:
+        try:
+            logger.info(f"Using ScraperAPI endpoint for {url}...")
+            api_url = f"https://api.scraperapi.com?api_key={scraperapi_key}&url={urllib.parse.quote(url)}&country_code=in"
+            resp = requests.get(api_url, timeout=35)
+            if resp.status_code == 200 and not is_amazon_captcha(resp.text) and has_product_title_content(resp.text):
+                logger.info(f"ScraperAPI successfully fetched {url}")
+                return resp.text, url
+        except Exception as sc_err:
+            logger.warning(f"ScraperAPI request failed: {sc_err}")
+
     proxy_url = os.environ.get("AMAZON_SCRAPER_PROXY") or os.environ.get("SCRAPER_PROXY_URL")
     proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
 
@@ -242,6 +259,7 @@ def fetch_amazon_page(url: str, timeout: int = 15) -> Tuple[str, str]:
     # Automatic unblocking fallback:
     # If direct requests are blocked by CAPTCHA (common on cloud/VPS providers like Hostinger),
     # fetch through the headless unblocking gateway with rendered HTML output.
+    gateway_err_msg = ""
     try:
         logger.info(
             f"Direct attempts blocked or incomplete. Attempting unblocking gateway fallback for {url}..."
@@ -258,7 +276,7 @@ def fetch_amazon_page(url: str, timeout: int = 15) -> Tuple[str, str]:
         resp = requests.get(
             reader_url,
             headers=reader_headers,
-            timeout=timeout + 5,
+            timeout=30,
             allow_redirects=True,
         )
         if resp.status_code == 200 and not is_amazon_captcha(resp.text) and has_product_title_content(resp.text):
@@ -266,16 +284,16 @@ def fetch_amazon_page(url: str, timeout: int = 15) -> Tuple[str, str]:
                 f"Successfully fetched Amazon product page for {url} via unblocking gateway."
             )
             return resp.text, url
+        else:
+            gateway_err_msg = f"HTTP {resp.status_code}, captcha={is_amazon_captcha(resp.text)}, title_found={has_product_title_content(resp.text)}"
     except Exception as reader_err:
+        gateway_err_msg = str(reader_err)
         logger.warning(f"Unblocking gateway fallback failed for {url}: {reader_err}")
 
-    if last_error:
-        raise RuntimeError(
-            f"Failed to fetch Amazon product page. Amazon anti-bot security or network blocked requests: {last_error}"
-        )
+    detail = f" [Gateway: {gateway_err_msg}]" if gateway_err_msg else ""
     raise RuntimeError(
-        "Amazon Anti-Bot Verification (CAPTCHA) blocked all requests. "
-        "Server IP may be rate-limited by Amazon. Please set AMAZON_SCRAPER_PROXY or retry shortly."
+        f"Amazon Anti-Bot Verification (CAPTCHA) blocked all requests.{detail} "
+        "Server IP may be rate-limited by Amazon. Please set AMAZON_SCRAPER_PROXY or SCRAPERAPI_KEY in .env.prod."
     )
 
 
