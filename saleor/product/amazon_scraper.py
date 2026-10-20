@@ -77,19 +77,6 @@ BROWSER_PROFILES = [
             "Accept-Language": "en-IN,en;q=0.8,en-US;q=0.5",
             "Accept-Encoding": "gzip, deflate",
             "Referer": "https://www.google.com/",
-            "Upgrade-Insecure-Requests": "1",
-        },
-    },
-    {
-        "name": "Safari-iPhone",
-        "headers": {
-            "User-Agent": (
-                "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) "
-                "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
-            ),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-IN,en;q=0.9",
-            "Referer": "https://www.amazon.in/",
         },
     },
 ]
@@ -141,6 +128,16 @@ def is_amazon_captcha(html_text: Optional[str]) -> bool:
         or "robot check" in lower
         or "api-services-support@amazon.com" in lower
         or ('<title dir="ltr">amazon.in</title>' in lower and 'id="producttitle"' not in lower)
+    )
+
+
+def has_product_title_content(html_text: Optional[str]) -> bool:
+    if not html_text or len(html_text) < 10000:
+        return False
+    return bool(
+        re.search(r'id=["\']productTitle["\']', html_text, re.I)
+        or re.search(r'<h1[^>]*id=["\']title["\']', html_text, re.I)
+        or re.search(r'property=["\']og:title["\']', html_text, re.I)
     )
 
 
@@ -228,9 +225,9 @@ def fetch_amazon_page(url: str, timeout: int = 15) -> Tuple[str, str]:
             )
             resp.raise_for_status()
 
-            if is_amazon_captcha(resp.text):
+            if is_amazon_captcha(resp.text) or not has_product_title_content(resp.text):
                 logger.warning(
-                    f"Amazon CAPTCHA detected for {url} using profile {profile['name']}. Retrying with next profile..."
+                    f"Amazon response incomplete or CAPTCHA detected for {url} using profile {profile['name']}. Retrying with next profile..."
                 )
                 continue
 
@@ -247,7 +244,7 @@ def fetch_amazon_page(url: str, timeout: int = 15) -> Tuple[str, str]:
     # fetch through the headless unblocking gateway with rendered HTML output.
     try:
         logger.info(
-            f"Direct attempts blocked by CAPTCHA. Attempting unblocking gateway fallback for {url}..."
+            f"Direct attempts blocked or incomplete. Attempting unblocking gateway fallback for {url}..."
         )
         reader_url = f"https://r.jina.ai/{url}"
         reader_headers = {
@@ -264,7 +261,7 @@ def fetch_amazon_page(url: str, timeout: int = 15) -> Tuple[str, str]:
             timeout=timeout + 5,
             allow_redirects=True,
         )
-        if resp.status_code == 200 and not is_amazon_captcha(resp.text) and len(resp.text) > 10000:
+        if resp.status_code == 200 and not is_amazon_captcha(resp.text) and has_product_title_content(resp.text):
             logger.info(
                 f"Successfully fetched Amazon product page for {url} via unblocking gateway."
             )
