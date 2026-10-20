@@ -242,6 +242,36 @@ def fetch_amazon_page(url: str, timeout: int = 15) -> Tuple[str, str]:
             )
             last_error = e
 
+    # Automatic unblocking fallback:
+    # If direct requests are blocked by CAPTCHA (common on cloud/VPS providers like Hostinger),
+    # fetch through the headless unblocking gateway with rendered HTML output.
+    try:
+        logger.info(
+            f"Direct attempts blocked by CAPTCHA. Attempting unblocking gateway fallback for {url}..."
+        )
+        reader_url = f"https://r.jina.ai/{url}"
+        reader_headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            ),
+            "X-Return-Format": "html",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        }
+        resp = requests.get(
+            reader_url,
+            headers=reader_headers,
+            timeout=timeout + 5,
+            allow_redirects=True,
+        )
+        if resp.status_code == 200 and not is_amazon_captcha(resp.text) and len(resp.text) > 10000:
+            logger.info(
+                f"Successfully fetched Amazon product page for {url} via unblocking gateway."
+            )
+            return resp.text, url
+    except Exception as reader_err:
+        logger.warning(f"Unblocking gateway fallback failed for {url}: {reader_err}")
+
     if last_error:
         raise RuntimeError(
             f"Failed to fetch Amazon product page. Amazon anti-bot security or network blocked requests: {last_error}"
