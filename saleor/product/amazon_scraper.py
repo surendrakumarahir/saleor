@@ -208,6 +208,28 @@ def fetch_amazon_page(url: str, timeout: int = 15) -> Tuple[str, str]:
     proxy_url = os.environ.get("AMAZON_SCRAPER_PROXY") or os.environ.get("SCRAPER_PROXY_URL")
     proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
 
+    # 1. Try Chrome TLS & HTTP/2 impersonation (bypasses Amazon CloudFront WAF on datacenter IPs without proxies)
+    try:
+        from curl_cffi import requests as cffi_requests
+        try:
+            logger.info(f"Attempting Chrome TLS impersonation fetch for {url}...")
+            cffi_resp = cffi_requests.get(
+                url,
+                impersonate="chrome131",
+                timeout=timeout,
+                headers={
+                    "Accept-Language": "en-IN,en;q=0.9",
+                    "Referer": "https://www.google.com/",
+                },
+            )
+            if cffi_resp.status_code == 200 and not is_amazon_captcha(cffi_resp.text) and has_product_title_content(cffi_resp.text):
+                logger.info(f"Successfully fetched Amazon product page for {url} via Chrome impersonation.")
+                return cffi_resp.text, str(cffi_resp.url)
+        except Exception as cffi_err:
+            logger.warning(f"Chrome impersonation attempt failed for {url}: {cffi_err}")
+    except ImportError:
+        pass
+
     last_error: Optional[Exception] = None
 
     for profile in BROWSER_PROFILES:
