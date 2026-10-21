@@ -16,6 +16,30 @@ logger = logging.getLogger(__name__)
 # Profiles with matched Client Hints and User-Agents to prevent bot detection
 BROWSER_PROFILES = [
     {
+        "name": "Safari-iPhone",
+        "headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) "
+                "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-IN,en;q=0.9",
+            "Referer": "https://www.amazon.in/",
+        },
+    },
+    {
+        "name": "Chrome-Android",
+        "headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (Linux; Android 14; SM-S928B) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.200 Mobile Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-IN,en;q=0.9",
+            "Referer": "https://www.amazon.in/",
+        },
+    },
+    {
         "name": "Chrome-Windows",
         "headers": {
             "User-Agent": (
@@ -77,18 +101,6 @@ BROWSER_PROFILES = [
             "Accept-Language": "en-IN,en;q=0.8,en-US;q=0.5",
             "Accept-Encoding": "gzip, deflate",
             "Referer": "https://www.google.com/",
-        },
-    },
-    {
-        "name": "Safari-iPhone",
-        "headers": {
-            "User-Agent": (
-                "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) "
-                "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
-            ),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-IN,en;q=0.9",
-            "Referer": "https://www.amazon.in/",
         },
     },
 ]
@@ -264,21 +276,6 @@ def fetch_amazon_page(url: str, timeout: int = 15) -> Tuple[str, str]:
         ua = headers["User-Agent"]
 
         try:
-            # Pre-warm session to obtain essential Amazon session cookies
-            try:
-                session.get(
-                    "https://www.amazon.in",
-                    headers={
-                        "User-Agent": ua,
-                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                        "Referer": "https://www.google.com/",
-                    },
-                    timeout=min(timeout, 6),
-                    allow_redirects=True,
-                )
-            except Exception:
-                pass  # Warmup is opportunistic; proceed if it fails
-
             resp = session.get(
                 url,
                 headers=headers,
