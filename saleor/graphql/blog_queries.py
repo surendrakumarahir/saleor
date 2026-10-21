@@ -38,8 +38,15 @@ from saleor.graphql.core.utils import from_global_id_or_error
 
 
 def _is_staff_user(info):
-    user = info.context.user
-    return bool(user and user.is_authenticated and (user.is_staff or user.has_perm("blog.manage_blog")))
+    context = getattr(info, "context", None)
+    if not context:
+        return False
+    user = getattr(context, "user", None)
+    if not user or not getattr(user, "is_authenticated", False):
+        return False
+    is_staff = getattr(user, "is_staff", False)
+    has_perm = user.has_perm("blog.manage_blog") if hasattr(user, "has_perm") else False
+    return bool(is_staff or has_perm)
 
 
 class BlogQueries(graphene.ObjectType):
