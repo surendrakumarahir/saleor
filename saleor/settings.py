@@ -297,6 +297,7 @@ CELERY_RESTRICT_WRITER_METHOD = "saleor.core.db.connection.log_writer_usage"
 INSTALLED_APPS = [
     # External apps that need to go before django's
     "saleor.banner",
+    "saleor.blog",
     "storages",
     "corsheaders",
     # Django modules

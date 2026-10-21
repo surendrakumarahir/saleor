@@ -18,6 +18,8 @@ from graphql.backend.base import GraphQLDocument
 from graphql.execution import ExecutionResult
 from saleor.graphql.banner_queries import BannerQueries
 from saleor.graphql.banner_mutations import BannerMutations
+from saleor.graphql.blog_queries import BlogQueries
+from saleor.graphql.blog_mutations import BlogMutations
 
 from ..core.utils.cache import CacheDict
 from ..graphql.notifications.schema import ExternalNotificationMutations
@@ -93,6 +95,7 @@ def monitor_fields_usage(schema: graphql.GraphQLSchema) -> None:
 
 class Query(
     BannerQueries,
+    BlogQueries,
     AccountQueries,
     AppQueries,
     AttributeQueries,
@@ -121,6 +124,7 @@ class Query(
 
 class Mutation(
     BannerMutations,
+    BlogMutations,
     AccountMutations,
     AppMutations,
     AttributeMutations,
