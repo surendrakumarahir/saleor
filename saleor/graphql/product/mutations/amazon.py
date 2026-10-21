@@ -58,6 +58,10 @@ class AmazonProductExtract(BaseMutation):
             required=True,
             description="List of Amazon URLs or 10-character ASINs",
         )
+        raw_html = graphene.String(
+            required=False,
+            description="Raw Amazon HTML content (if fetched via browser extension or client companion)",
+        )
 
     class Meta:
         description = "Extracts product information (title, author, publisher, specs, HD images) from Amazon India."
@@ -69,6 +73,7 @@ class AmazonProductExtract(BaseMutation):
     @classmethod
     def perform_mutation(cls, _root, info, /, **data):
         raw_urls = data.get("urls") or []
+        raw_html = data.get("raw_html") or ""
         clean_urls: List[str] = []
         for u in raw_urls:
             if isinstance(u, str) and u.strip():
@@ -79,10 +84,10 @@ class AmazonProductExtract(BaseMutation):
         results = []
         errors = []
 
-        for target_url in clean_urls:
+        if raw_html.strip():
+            target_url = clean_urls[0] if clean_urls else "https://www.amazon.in"
             try:
-                html, final_url = fetch_amazon_page(target_url)
-                prod_data = parse_amazon_product(html, target_url, final_url)
+                prod_data = parse_amazon_product(raw_html, target_url, target_url)
                 results.append(
                     ExtractedAmazonProduct(
                         asin=prod_data.get("asin"),
@@ -106,9 +111,40 @@ class AmazonProductExtract(BaseMutation):
             except Exception as e:
                 errors.append(
                     AmazonExtractError(
-                        url=target_url, message=str(e) or "Failed to fetch Amazon page"
+                        url=target_url, message=str(e) or "Failed to parse Amazon HTML"
                     )
                 )
+        else:
+            for target_url in clean_urls:
+                try:
+                    html, final_url = fetch_amazon_page(target_url)
+                    prod_data = parse_amazon_product(html, target_url, final_url)
+                    results.append(
+                        ExtractedAmazonProduct(
+                            asin=prod_data.get("asin"),
+                            url=prod_data.get("url"),
+                            title=prod_data.get("title"),
+                            author=prod_data.get("author"),
+                            publisher=prod_data.get("publisher"),
+                            publication_date=prod_data.get("publicationDate"),
+                            publication_year=prod_data.get("publicationYear"),
+                            item_weight=prod_data.get("itemWeight"),
+                            dimensions=prod_data.get("dimensions"),
+                            language=prod_data.get("language"),
+                            selling_price=prod_data.get("sellingPrice"),
+                            mrp=prod_data.get("mrp"),
+                            description=prod_data.get("description"),
+                            specs=prod_data.get("specs"),
+                            images=prod_data.get("images") or [],
+                            primary_image=prod_data.get("primaryImage"),
+                        )
+                    )
+                except Exception as e:
+                    errors.append(
+                        AmazonExtractError(
+                            url=target_url, message=str(e) or "Failed to fetch Amazon page"
+                        )
+                    )
 
         return cls(
             success=len(results) > 0,
