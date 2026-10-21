@@ -79,6 +79,18 @@ BROWSER_PROFILES = [
             "Referer": "https://www.google.com/",
         },
     },
+    {
+        "name": "Safari-iPhone",
+        "headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) "
+                "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-IN,en;q=0.9",
+            "Referer": "https://www.amazon.in/",
+        },
+    },
 ]
 
 IGNORE_AUTHOR_WORDS = {
@@ -138,6 +150,9 @@ def has_product_title_content(html_text: Optional[str]) -> bool:
         re.search(r'id=["\']productTitle["\']', html_text, re.I)
         or re.search(r'<h1[^>]*id=["\']title["\']', html_text, re.I)
         or re.search(r'property=["\']og:title["\']', html_text, re.I)
+        or re.search(r'<meta\s+name=["\']title["\']', html_text, re.I)
+        or re.search(r'TURBO_CHECKOUT_HEADER', html_text)
+        or re.search(r'bylineContributor', html_text)
     )
 
 
@@ -188,22 +203,30 @@ def normalize_amazon_url(input_str: str) -> str:
 
 
 def fetch_amazon_page(url: str, timeout: int = 15) -> Tuple[str, str]:
-    # 0. Check for ScraperAPI key (direct residential unblocker)
-    scraperapi_key = (
-        os.environ.get("SCRAPERAPI_KEY")
-        or os.environ.get("SCRAPER_API_KEY")
-        or os.environ.get("AMAZON_SCRAPER_API_KEY")
+    # 0. Check for Cloudflare Worker URL (Free, unblocked proxy)
+    worker_url = (
+        os.environ.get("CLOUDFLARE_WORKER_URL")
+        or os.environ.get("AMAZON_CLOUDFLARE_WORKER_URL")
+        or os.environ.get("AMAZON_WORKER_URL")
     )
-    if scraperapi_key:
+    if worker_url:
         try:
-            logger.info(f"Using ScraperAPI endpoint for {url}...")
-            api_url = f"https://api.scraperapi.com?api_key={scraperapi_key}&url={urllib.parse.quote(url)}&country_code=in"
-            resp = requests.get(api_url, timeout=35)
+            logger.info(f"Using Cloudflare Worker unblocker for {url}...")
+            endpoint = f"{worker_url.rstrip('/')}/?url={urllib.parse.quote(url)}"
+            resp = requests.get(
+                endpoint,
+                headers={"User-Agent": "SaleorAmazonImporter/2.0"},
+                timeout=30,
+            )
             if resp.status_code == 200 and not is_amazon_captcha(resp.text) and has_product_title_content(resp.text):
-                logger.info(f"ScraperAPI successfully fetched {url}")
+                logger.info(f"Cloudflare Worker successfully fetched {url}")
                 return resp.text, url
-        except Exception as sc_err:
-            logger.warning(f"ScraperAPI request failed: {sc_err}")
+            else:
+                logger.warning(
+                    f"Cloudflare Worker returned HTTP {resp.status_code}, captcha={is_amazon_captcha(resp.text)}, title={has_product_title_content(resp.text)}"
+                )
+        except Exception as cf_err:
+            logger.warning(f"Cloudflare Worker request failed: {cf_err}")
 
     proxy_url = os.environ.get("AMAZON_SCRAPER_PROXY") or os.environ.get("SCRAPER_PROXY_URL")
     proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
@@ -315,7 +338,7 @@ def fetch_amazon_page(url: str, timeout: int = 15) -> Tuple[str, str]:
     detail = f" [Gateway: {gateway_err_msg}]" if gateway_err_msg else ""
     raise RuntimeError(
         f"Amazon Anti-Bot Verification (CAPTCHA) blocked all requests.{detail} "
-        "Server IP may be rate-limited by Amazon. Please set AMAZON_SCRAPER_PROXY or SCRAPERAPI_KEY in .env.prod."
+        "Server IP may be rate-limited by Amazon. Please set CLOUDFLARE_WORKER_URL or AMAZON_SCRAPER_PROXY in .env.prod."
     )
 
 
@@ -375,9 +398,36 @@ def parse_amazon_product(
     if title_m:
         title = clean_text(title_m.group(1))
     else:
+        turbo = re.search(r'"TURBO_CHECKOUT_HEADER"\s*:\s*"Buy now:\s*(.*?)"', html)
+        if turbo:
+            title = clean_text(turbo.group(1))
+
+    if not title:
+        meta_m = re.search(
+            r'<meta\s+name=["\']title["\']\s+content=["\'](.*?)["\']',
+            html,
+            re.IGNORECASE,
+        )
+        if meta_m:
+            raw = clean_text(meta_m.group(1))
+            raw = re.sub(r"^Buy\s+", "", raw, flags=re.IGNORECASE)
+            raw = re.sub(r"\s*\|\s*.*$", "", raw)
+            raw = re.sub(r"\s+Book\s+Book\s+Online.*$", "", raw, flags=re.IGNORECASE)
+            raw = re.sub(r"\s+Book\s+Online.*$", "", raw, flags=re.IGNORECASE)
+            raw = re.sub(r":\s*Amazon\.(in|com|co\.uk|de|ca).*$", "", raw, flags=re.IGNORECASE)
+            if raw.strip():
+                title = raw.strip()
+
+    if not title:
         raw_t = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
         if raw_t:
             title = clean_text(raw_t.group(1))
+            title = re.sub(
+                r"^Buy\s+",
+                "",
+                title,
+                flags=re.IGNORECASE,
+            )
             title = re.sub(
                 r":\s*Amazon\.(in|com|co\.uk|de|ca).*$",
                 "",
@@ -440,27 +490,68 @@ def parse_amazon_product(
             if is_valid_author(cand):
                 author = cand
 
+    # Pattern D: Mobile bylineContributor
+    if not author:
+        byline_c = re.search(
+            r'<a[^>]*id=["\']bylineContributor["\'][^>]*>(.*?)</a>',
+            html,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if byline_c:
+            cand = clean_text(byline_c.group(1))
+            cand_clean = re.sub(r"\(Author\)", "", cand, flags=re.IGNORECASE).strip()
+            if is_valid_author(cand_clean):
+                author = cand_clean
+
+    # Pattern E: Author profile links /e/
+    if not author:
+        for m in re.finditer(
+            r'<a[^>]*href=["\']/[^"\']+/e/[A-Z0-9]+[^"\']*["\'][^>]*>(.*?)</a>',
+            html,
+            re.IGNORECASE | re.DOTALL,
+        ):
+            cand = clean_text(m.group(1))
+            cand_clean = re.sub(r"\(Author\)", "", cand, flags=re.IGNORECASE).strip()
+            if is_valid_author(cand_clean):
+                author = cand_clean
+                break
+
     # 3. Price & MRP Extraction
     selling_price = None
     mrp = None
 
-    price_whole = re.search(
-        r'<span[^>]*class=["\'][^"\']*a-price-whole[^"\']*["\'][^>]*>([\d,]+)',
-        html,
-        re.IGNORECASE,
+    # Check targeted buybox/twister/apex price first (avoids sponsored ads)
+    m_box_price = (
+        re.search(r'"priceAmount"\s*:\s*([\d.]+)', html)
+        or re.search(r'name=["\']items\[0\.base\]\[customerVisiblePrice\]\[amount\]["\']\s+value=["\']([\d.]+)["\']', html)
+        or re.search(r'id=["\']twister-plus-price-data-price["\']\s+value=["\']([\d.]+)["\']', html)
+        or re.search(r'id=["\']tp_price_block_total_price_in["\'].*?<span[^>]*class=["\'][^"\']*a-price-whole[^"\']*["\'][^>]*>([\d,]+)', html, re.DOTALL)
+        or re.search(r'id=["\'](?:corePriceDisplay_desktop_feature_div|corePrice_desktop|apex_desktop)["\'].*?<span[^>]*class=["\'][^"\']*a-price-whole[^"\']*["\'][^>]*>([\d,]+)', html, re.DOTALL)
     )
-    price_frac = re.search(
-        r'<span[^>]*class=["\'][^"\']*a-price-fraction[^"\']*["\'][^>]*>(\d+)',
-        html,
-        re.IGNORECASE,
-    )
-    if price_whole:
-        w = price_whole.group(1).replace(",", "")
-        f = price_frac.group(1) if price_frac else "00"
+    if m_box_price:
         try:
-            selling_price = float(f"{w}.{f}")
+            selling_price = float(m_box_price.group(1).replace(",", ""))
         except ValueError:
             pass
+
+    if selling_price is None:
+        price_whole = re.search(
+            r'<span[^>]*class=["\'][^"\']*a-price-whole[^"\']*["\'][^>]*>([\d,]+)',
+            html,
+            re.IGNORECASE,
+        )
+        price_frac = re.search(
+            r'<span[^>]*class=["\'][^"\']*a-price-fraction[^"\']*["\'][^>]*>(\d+)',
+            html,
+            re.IGNORECASE,
+        )
+        if price_whole:
+            w = price_whole.group(1).replace(",", "")
+            f = price_frac.group(1) if price_frac else "00"
+            try:
+                selling_price = float(f"{w}.{f}")
+            except ValueError:
+                pass
 
     if selling_price is None:
         offscreen = re.search(
@@ -554,6 +645,14 @@ def parse_amazon_product(
     )
     # Remove trailing edition or date info from publisher if present (e.g. "Shri Vinod Pustak Mandir; 2021st edition (1 January 2021)")
     publisher = re.sub(r";.*$", "", raw_publisher).strip()
+    if not publisher:
+        mob_pub = re.search(
+            r'<span[^>]*class=["\'][^"\']*offer-display-feature-text-message[^"\']*["\'][^>]*>(.*?)</span>',
+            html,
+            re.IGNORECASE,
+        )
+        if mob_pub:
+            publisher = clean_text(mob_pub.group(1))
 
     publication_date = (
         specs.get("Publication date")
@@ -694,7 +793,21 @@ def parse_amazon_product(
     if img_front:
         raw_images.append(img_front.group(1))
 
-    # 6D. Clean, normalize to SL1500, and deduplicate by Amazon image ID
+    # 6D. Mobile image wrappers & direct Amazon product images
+    for m in re.finditer(
+        r'<img[^>]*class=["\'][^"\']*(?:fp-image-wrapper|main-image|a-dynamic-image)[^"\']*["\'][^>]*src=["\']([^"\'\s]+)["\']',
+        html,
+        re.IGNORECASE,
+    ):
+        raw_images.append(m.group(1))
+
+    for m in re.finditer(
+        r'https://images-(?:eu|na)\.ssl-images-amazon\.com/images/I/[A-Za-z0-9%_-]+\.jpg',
+        html,
+    ):
+        raw_images.append(m.group(0))
+
+    # 6E. Clean, normalize to SL1500, and deduplicate by Amazon image ID
     clean_images: List[str] = []
     seen_ids = set()
 
