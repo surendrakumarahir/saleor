@@ -3,7 +3,9 @@
 import json
 import posixpath
 import re
+import secrets
 import graphene
+from django.core.exceptions import ValidationError
 from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import UploadedFile
 from django.utils import timezone
@@ -42,9 +44,27 @@ BLOG_PERMISSIONS = ["blog.manage_blog", "page.manage_pages"]
 def _resolve_upload_from_request(info, file):
     if isinstance(file, UploadedFile):
         return file
-    if hasattr(info.context, "FILES") and file in info.context.FILES:
-        return info.context.FILES[file]
+    if hasattr(info.context, "FILES"):
+        if file in info.context.FILES:
+            return info.context.FILES[file]
+        if str(file) in info.context.FILES:
+            return info.context.FILES[str(file)]
     return file
+
+
+def _get_input_data(input_obj):
+    if isinstance(input_obj, dict):
+        return input_obj
+    if hasattr(input_obj, "kwargs"):
+        return input_obj.kwargs
+    res = {}
+    for k in dir(input_obj):
+        if k.startswith("_"):
+            continue
+        val = getattr(input_obj, k)
+        if not isinstance(val, (graphene.Scalar, graphene.Field, graphene.InputField)) and not callable(val):
+            res[k] = val
+    return res
 
 
 def _parse_id(id_val, type_name):
@@ -245,11 +265,13 @@ class BlogPostUpdate(graphene.Mutation):
         if not post:
             return BlogPostUpdate(errors=[BlogError(code=BlogErrorCode.NOT_FOUND, message="Post not found.", field="id")])
 
-        if input.title is not None:
-            post.title = input.title.strip()
+        data = _get_input_data(input)
 
-        if input.slug is not None:
-            new_slug = input.slug.strip()
+        if "title" in data and data["title"] is not None:
+            post.title = str(data["title"]).strip()
+
+        if "slug" in data and data["slug"] is not None:
+            new_slug = str(data["slug"]).strip()
             if new_slug != post.slug:
                 if BlogPost.objects.filter(slug=new_slug).exclude(pk=post.pk).exists():
                     return BlogPostUpdate(errors=[BlogError(code=BlogErrorCode.SLUG_ALREADY_EXISTS, message="Slug already exists.", field="slug")])
@@ -260,69 +282,71 @@ class BlogPostUpdate(graphene.Mutation):
                 )
                 post.slug = new_slug
 
-        if input.excerpt is not None:
-            post.excerpt = input.excerpt
-        if input.content is not None:
-            post.content = input.content
-        if input.content_html is not None:
-            post.content_html = input.content_html
-        if input.status is not None:
-            post.status = input.status
-            if input.status == BlogPostStatus.PUBLISHED and not post.published_at:
+        if "excerpt" in data:
+            post.excerpt = data["excerpt"] or ""
+        if "content" in data:
+            post.content = data["content"] or ""
+        if "content_html" in data:
+            post.content_html = data["content_html"] or ""
+        if "status" in data and data["status"] is not None:
+            post.status = data["status"]
+            if data["status"] == BlogPostStatus.PUBLISHED and not post.published_at:
                 post.published_at = timezone.now()
-        if input.featured_image is not None:
-            post.featured_image = input.featured_image
-        if input.featured_image_alt is not None:
-            post.featured_image_alt = input.featured_image_alt
-        if input.featured_image_caption is not None:
-            post.featured_image_caption = input.featured_image_caption
-        if input.seo_title is not None:
-            post.seo_title = input.seo_title
-        if input.seo_description is not None:
-            post.seo_description = input.seo_description
-        if input.canonical_url is not None:
-            post.canonical_url = input.canonical_url
-        if input.robots_index is not None:
-            post.robots_index = input.robots_index
-        if input.robots_follow is not None:
-            post.robots_follow = input.robots_follow
-        if input.og_title is not None:
-            post.og_title = input.og_title
-        if input.og_description is not None:
-            post.og_description = input.og_description
-        if input.og_image is not None:
-            post.og_image = input.og_image
-        if input.is_featured is not None:
-            post.is_featured = input.is_featured
-        if input.allow_comments is not None:
-            post.allow_comments = input.allow_comments
-        if input.reading_time_minutes is not None:
-            post.reading_time_minutes = input.reading_time_minutes
-        elif input.content or input.content_html:
+        if "featured_image" in data:
+            val = str(data["featured_image"]).strip() if data["featured_image"] else None
+            post.featured_image = val
+        if "featured_image_alt" in data:
+            post.featured_image_alt = data["featured_image_alt"] or ""
+        if "featured_image_caption" in data:
+            post.featured_image_caption = data["featured_image_caption"] or ""
+        if "seo_title" in data:
+            post.seo_title = data["seo_title"] or ""
+        if "seo_description" in data:
+            post.seo_description = data["seo_description"] or ""
+        if "canonical_url" in data:
+            post.canonical_url = data["canonical_url"] or None
+        if "robots_index" in data and data["robots_index"] is not None:
+            post.robots_index = data["robots_index"]
+        if "robots_follow" in data and data["robots_follow"] is not None:
+            post.robots_follow = data["robots_follow"]
+        if "og_title" in data:
+            post.og_title = data["og_title"] or ""
+        if "og_description" in data:
+            post.og_description = data["og_description"] or ""
+        if "og_image" in data:
+            val = str(data["og_image"]).strip() if data["og_image"] else None
+            post.og_image = val
+        if "is_featured" in data and data["is_featured"] is not None:
+            post.is_featured = data["is_featured"]
+        if "allow_comments" in data and data["allow_comments"] is not None:
+            post.allow_comments = data["allow_comments"]
+        if "reading_time_minutes" in data and data["reading_time_minutes"] is not None:
+            post.reading_time_minutes = data["reading_time_minutes"]
+        elif "content" in data or "content_html" in data:
             post.calculate_reading_time()
 
-        if input.author_id is not None:
-            author_pk = _parse_id(input.author_id, "BlogAuthor")
+        if "author_id" in data:
+            author_pk = _parse_id(data["author_id"], "BlogAuthor")
             post.author = BlogAuthor.objects.filter(pk=author_pk).first() if author_pk else None
 
-        if input.primary_category_id is not None:
-            cat_pk = _parse_id(input.primary_category_id, "BlogCategory")
+        if "primary_category_id" in data:
+            cat_pk = _parse_id(data["primary_category_id"], "BlogCategory")
             post.primary_category = BlogCategory.objects.filter(pk=cat_pk).first() if cat_pk else None
 
-        if input.published_at is not None:
-            post.published_at = input.published_at
-        if input.scheduled_at is not None:
-            post.scheduled_at = input.scheduled_at
+        if "published_at" in data and data["published_at"] is not None:
+            post.published_at = data["published_at"]
+        if "scheduled_at" in data and data["scheduled_at"] is not None:
+            post.scheduled_at = data["scheduled_at"]
 
-        if input.recommended_books is not None:
+        if "recommended_books" in data and data["recommended_books"] is not None:
             try:
-                post.recommended_books = json.loads(input.recommended_books) if isinstance(input.recommended_books, str) else input.recommended_books
+                post.recommended_books = json.loads(data["recommended_books"]) if isinstance(data["recommended_books"], str) else data["recommended_books"]
             except Exception:
                 pass
 
-        if input.table_of_contents is not None:
+        if "table_of_contents" in data and data["table_of_contents"] is not None:
             try:
-                post.table_of_contents = json.loads(input.table_of_contents) if isinstance(input.table_of_contents, str) else input.table_of_contents
+                post.table_of_contents = json.loads(data["table_of_contents"]) if isinstance(data["table_of_contents"], str) else data["table_of_contents"]
             except Exception:
                 pass
 
@@ -330,12 +354,12 @@ class BlogPostUpdate(graphene.Mutation):
         post.revision_number += 1
         post.save()
 
-        if input.category_ids is not None:
-            cat_pks = [_parse_id(cid, "BlogCategory") for cid in input.category_ids if cid]
+        if "category_ids" in data and data["category_ids"] is not None:
+            cat_pks = [_parse_id(cid, "BlogCategory") for cid in data["category_ids"] if cid]
             post.categories.set([c for c in cat_pks if c])
 
-        if input.tag_ids is not None:
-            tag_pks = [_parse_id(tid, "BlogTag") for tid in input.tag_ids if tid]
+        if "tag_ids" in data and data["tag_ids"] is not None:
+            tag_pks = [_parse_id(tid, "BlogTag") for tid in data["tag_ids"] if tid]
             post.tags.set([t for t in tag_pks if t])
 
         # Snapshot new revision
@@ -552,21 +576,51 @@ class UploadBlogMedia(graphene.Mutation):
     def mutate(self, info, file, folder="posts"):
         try:
             upload_file = _resolve_upload_from_request(info, file)
-            validate_upload_file(upload_file, UploadErrorCode)
+            if not upload_file:
+                raise ValidationError("Received an empty file.")
 
-            clean_folder = folder.strip().strip("/")
+            validate_upload_file(upload_file, UploadErrorCode, "file")
+
+            clean_folder = (folder or "posts").strip().strip("/")
             if clean_folder not in {"posts", "authors", "og"}:
                 clean_folder = "posts"
 
             target_dir = posixpath.join("blog", clean_folder)
-            file_name = add_hash_to_file_name(upload_file.name)
+            if hasattr(upload_file, "_name") and upload_file._name:
+                upload_file._name = upload_file._name.replace(" ", "_")
+                add_hash_to_file_name(upload_file)
+                file_name = upload_file.name
+            else:
+                base, ext = posixpath.splitext(getattr(upload_file, "name", "upload.jpg") or "upload.jpg")
+                base = base.replace(" ", "_")
+                file_name = f"{base}_{secrets.token_hex(4)}{ext}"
+
             storage_key = posixpath.join(target_dir, file_name)
             saved_key = default_storage.save(storage_key, upload_file)
             file_url = build_absolute_uri(default_storage.url(saved_key))
 
             return UploadBlogMedia(file_url=file_url, storage_key=saved_key, errors=[])
+        except ValidationError as e:
+            msg = str(e)
+            if hasattr(e, "message_dict"):
+                messages = []
+                for field_errs in e.message_dict.values():
+                    if isinstance(field_errs, (list, tuple)):
+                        messages.extend([str(item) for item in field_errs])
+                    else:
+                        messages.append(str(field_errs))
+                msg = "; ".join(messages)
+            elif hasattr(e, "messages"):
+                msg = "; ".join(e.messages)
+            elif hasattr(e, "message"):
+                msg = e.message
+            return UploadBlogMedia(
+                errors=[BlogError(code=BlogErrorCode.MEDIA_UPLOAD_ERROR, message=msg, field="file")]
+            )
         except Exception as e:
-            return UploadBlogMedia(errors=[BlogError(code=BlogErrorCode.MEDIA_UPLOAD_ERROR, message=str(e), field="file")])
+            return UploadBlogMedia(
+                errors=[BlogError(code=BlogErrorCode.MEDIA_UPLOAD_ERROR, message=str(e), field="file")]
+            )
 
 
 class BlogCategoryCreate(graphene.Mutation):
