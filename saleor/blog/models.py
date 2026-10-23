@@ -212,6 +212,7 @@ class BlogPost(models.Model):
     # Storefront features
     recommended_books = models.JSONField(default=list, blank=True)
     table_of_contents = models.JSONField(default=list, blank=True)
+    product_collections = models.JSONField(default=list, blank=True)
 
     class Meta:
         ordering = ("-published_at", "-created_at")

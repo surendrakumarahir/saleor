@@ -215,6 +215,7 @@ class BlogPostType(graphene.ObjectType):
     revision_number = graphene.Int()
     recommended_books = JSON()
     table_of_contents = JSON()
+    product_collections = JSON()
     faqs = graphene.List(BlogPostFAQType)
 
     @staticmethod

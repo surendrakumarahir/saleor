@@ -167,6 +167,7 @@ class BlogPostCreateInput(graphene.InputObjectType):
     scheduled_at = graphene.String()
     recommended_books = JSON()
     table_of_contents = JSON()
+    product_collections = JSON()
     faqs = graphene.List(BlogPostFAQInput, description="Optional dynamic list of FAQs.")
 
 
@@ -199,6 +200,7 @@ class BlogPostUpdateInput(graphene.InputObjectType):
     scheduled_at = graphene.String()
     recommended_books = JSON()
     table_of_contents = JSON()
+    product_collections = JSON()
     faqs = graphene.List(BlogPostFAQInput, description="Optional dynamic list of FAQs.")
 
 
@@ -279,6 +281,12 @@ class BlogPostCreate(graphene.Mutation):
         if input.table_of_contents:
             try:
                 post.table_of_contents = json.loads(input.table_of_contents) if isinstance(input.table_of_contents, str) else input.table_of_contents
+            except Exception:
+                pass
+
+        if hasattr(input, "product_collections") and input.product_collections is not None:
+            try:
+                post.product_collections = json.loads(input.product_collections) if isinstance(input.product_collections, str) else input.product_collections
             except Exception:
                 pass
 
@@ -399,6 +407,12 @@ class BlogPostUpdate(graphene.Mutation):
         if "table_of_contents" in data and data["table_of_contents"] is not None:
             try:
                 post.table_of_contents = json.loads(data["table_of_contents"]) if isinstance(data["table_of_contents"], str) else data["table_of_contents"]
+            except Exception:
+                pass
+
+        if "product_collections" in data and data["product_collections"] is not None:
+            try:
+                post.product_collections = json.loads(data["product_collections"]) if isinstance(data["product_collections"], str) else data["product_collections"]
             except Exception:
                 pass
 
