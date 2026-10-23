@@ -8,6 +8,7 @@ import graphene
 from django.core.exceptions import ValidationError
 from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import UploadedFile
+from django.db import transaction
 from django.utils import timezone
 from django.utils.text import slugify
 
@@ -16,6 +17,7 @@ from saleor.blog.models import (
     BlogAuthor,
     BlogCategory,
     BlogPost,
+    BlogPostFAQ,
     BlogPostRevision,
     BlogPostStatus,
     BlogRedirect,
@@ -91,6 +93,51 @@ def _log_audit(info, action, target_type, target_id, details=None):
     )
 
 
+def _sync_post_faqs(post: BlogPost, faqs_input):
+    if faqs_input is None:
+        return
+
+    with transaction.atomic():
+        existing_faqs = {faq.id: faq for faq in post.faqs.all()}
+        retained_ids = set()
+
+        for idx, raw_faq in enumerate(faqs_input):
+            faq_data = _get_input_data(raw_faq)
+            q = (faq_data.get("question") or "").strip()
+            a = (faq_data.get("answer") or "").strip()
+            if not q and not a:
+                continue
+
+            raw_id = faq_data.get("id")
+            faq_pk = _parse_id(raw_id, "BlogPostFAQ") if raw_id else None
+            sort_order = faq_data.get("sort_order") if faq_data.get("sort_order") is not None else idx
+
+            if faq_pk and faq_pk in existing_faqs:
+                faq_obj = existing_faqs[faq_pk]
+                faq_obj.question = q
+                faq_obj.answer = a
+                faq_obj.sort_order = sort_order
+                faq_obj.save(update_fields=["question", "answer", "sort_order", "updated_at"])
+                retained_ids.add(faq_pk)
+            else:
+                new_faq = BlogPostFAQ.objects.create(
+                    post=post,
+                    question=q,
+                    answer=a,
+                    sort_order=sort_order,
+                )
+                retained_ids.add(new_faq.id)
+
+        post.faqs.exclude(id__in=retained_ids).delete()
+
+
+class BlogPostFAQInput(graphene.InputObjectType):
+    id = graphene.ID(description="FAQ ID if updating existing FAQ.")
+    question = graphene.String(required=True, description="FAQ question.")
+    answer = graphene.String(required=True, description="FAQ answer.")
+    sort_order = graphene.Int(default_value=0, description="Display order.")
+
+
 class BlogPostCreateInput(graphene.InputObjectType):
     title = graphene.String(required=True, description="Post title.")
     slug = graphene.String(description="Unique post slug.")
@@ -120,6 +167,7 @@ class BlogPostCreateInput(graphene.InputObjectType):
     scheduled_at = graphene.String()
     recommended_books = JSON()
     table_of_contents = JSON()
+    faqs = graphene.List(BlogPostFAQInput, description="Optional dynamic list of FAQs.")
 
 
 class BlogPostUpdateInput(graphene.InputObjectType):
@@ -151,6 +199,7 @@ class BlogPostUpdateInput(graphene.InputObjectType):
     scheduled_at = graphene.String()
     recommended_books = JSON()
     table_of_contents = JSON()
+    faqs = graphene.List(BlogPostFAQInput, description="Optional dynamic list of FAQs.")
 
 
 class BlogPostCreate(graphene.Mutation):
@@ -242,6 +291,9 @@ class BlogPostCreate(graphene.Mutation):
         if input.tag_ids:
             tag_pks = [_parse_id(tid, "BlogTag") for tid in input.tag_ids if tid]
             post.tags.set([t for t in tag_pks if t])
+
+        if hasattr(input, "faqs") and input.faqs is not None:
+            _sync_post_faqs(post, input.faqs)
 
         # Create initial revision snapshot
         post.create_revision(info.context.user)
@@ -361,6 +413,9 @@ class BlogPostUpdate(graphene.Mutation):
         if "tag_ids" in data and data["tag_ids"] is not None:
             tag_pks = [_parse_id(tid, "BlogTag") for tid in data["tag_ids"] if tid]
             post.tags.set([t for t in tag_pks if t])
+
+        if "faqs" in data and data["faqs"] is not None:
+            _sync_post_faqs(post, data["faqs"])
 
         # Snapshot new revision
         post.create_revision(info.context.user)

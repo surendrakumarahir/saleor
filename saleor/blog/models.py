@@ -331,3 +331,30 @@ class BlogAuditLog(models.Model):
 
     def __str__(self):
         return f"{self.action} on {self.target_type}:{self.target_id} by {self.actor}"
+
+
+class BlogPostFAQ(models.Model):
+    """FAQ item associated with a blog post."""
+
+    post = models.ForeignKey(
+        BlogPost,
+        on_delete=models.CASCADE,
+        related_name="faqs",
+    )
+    question = models.CharField(max_length=500)
+    answer = models.TextField()
+    sort_order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("sort_order", "id")
+        verbose_name = "Blog Post FAQ"
+        verbose_name_plural = "Blog Post FAQs"
+        indexes = [
+            models.Index(fields=["post", "sort_order"]),
+        ]
+
+    def __str__(self):
+        return f"FAQ: {self.question[:50]} ({self.post.title})"
+

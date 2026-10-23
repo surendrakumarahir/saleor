@@ -9,6 +9,7 @@ from saleor.blog.models import (
     BlogAuthor,
     BlogCategory,
     BlogPost,
+    BlogPostFAQ,
     BlogPostRevision,
     BlogPostStatus,
     BlogRedirect,
@@ -156,6 +157,25 @@ class BlogPostRevisionType(graphene.ObjectType):
         return root.created_at.isoformat() if root.created_at else None
 
 
+class BlogPostFAQType(graphene.ObjectType):
+    """GraphQL type for BlogPostFAQ."""
+
+    id = graphene.ID(required=True)
+    question = graphene.String(required=True)
+    answer = graphene.String(required=True)
+    sort_order = graphene.Int()
+    created_at = graphene.String()
+    updated_at = graphene.String()
+
+    @staticmethod
+    def resolve_created_at(root: BlogPostFAQ, _info):
+        return root.created_at.isoformat() if root.created_at else None
+
+    @staticmethod
+    def resolve_updated_at(root: BlogPostFAQ, _info):
+        return root.updated_at.isoformat() if root.updated_at else None
+
+
 class BlogPostType(graphene.ObjectType):
     """Comprehensive GraphQL type for BlogPost."""
 
@@ -195,6 +215,11 @@ class BlogPostType(graphene.ObjectType):
     revision_number = graphene.Int()
     recommended_books = JSON()
     table_of_contents = JSON()
+    faqs = graphene.List(BlogPostFAQType)
+
+    @staticmethod
+    def resolve_faqs(root: BlogPost, _info):
+        return root.faqs.all().order_by("sort_order", "id")
 
     @staticmethod
     def resolve_featured_image(root: BlogPost, _info):
