@@ -16,6 +16,8 @@ class BlogErrorCode(graphene.Enum):
     PERMISSION_DENIED = "permission_denied"
     INVALID_DATE = "invalid_date"
     REVISION_NOT_FOUND = "revision_not_found"
+    COMMENT_NOT_FOUND = "comment_not_found"
+    COMMENTS_DISABLED = "comments_disabled"
     MEDIA_UPLOAD_ERROR = "media_upload_error"
     GRAPHQL_ERROR = "graphql_error"
 

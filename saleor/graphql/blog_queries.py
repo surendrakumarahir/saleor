@@ -7,6 +7,8 @@ from django.db.models import Q
 from saleor.blog.models import (
     BlogAuthor,
     BlogCategory,
+    BlogComment,
+    BlogCommentStatus,
     BlogPost,
     BlogPostRevision,
     BlogPostStatus,
@@ -15,14 +17,20 @@ from saleor.blog.models import (
 )
 from saleor.graphql.blog_filters import (
     BlogCategoryFilterInput,
+    BlogCommentFilterInput,
     BlogPostFilterInput,
 )
-from saleor.graphql.blog_sorters import BlogPostSortingInput
+from saleor.graphql.blog_sorters import (
+    BlogCommentSortingInput,
+    BlogPostSortingInput,
+)
 from saleor.graphql.blog_types import (
     BlogAuthorConnection,
     BlogAuthorType,
     BlogCategoryConnection,
     BlogCategoryType,
+    BlogCommentConnection,
+    BlogCommentType,
     BlogPostConnection,
     BlogPostRevisionType,
     BlogPostType,
@@ -116,6 +124,22 @@ class BlogQueries(graphene.ObjectType):
         category_slug=graphene.String(description="Category slug to filter by."),
         limit=graphene.Int(default_value=3, description="Maximum number of posts to return."),
         description="Retrieve related published posts.",
+    )
+
+    blog_comment = graphene.Field(
+        BlogCommentType,
+        id=graphene.ID(required=True, description="Comment ID."),
+        description="Retrieve a single blog comment.",
+    )
+
+    blog_comments = FilterConnectionField(
+        BlogCommentConnection,
+        filter=BlogCommentFilterInput(),
+        sort_by=BlogCommentSortingInput(),
+        post_slug=graphene.String(description="Filter by blog post slug."),
+        client_token=graphene.String(description="Client token for guest identification."),
+        user_id=graphene.ID(description="User ID for commenter identification."),
+        description="Retrieve a list of blog comments.",
     )
 
     def resolve_blog_post(self, info, id=None, slug=None):
@@ -262,3 +286,51 @@ class BlogQueries(graphene.ObjectType):
                 return list(category_qs.order_by("-published_at")[:limit])
 
         return list(qs.order_by("-is_featured", "-published_at")[:limit])
+
+    def resolve_blog_comment(self, info, id):
+        try:
+            _, pk_int = from_global_id_or_error(id, "BlogComment", raise_error=False)
+            lookup_id = pk_int if pk_int else id
+            return BlogComment.objects.select_related("post", "user").filter(pk=lookup_id).first()
+        except Exception:
+            return BlogComment.objects.select_related("post", "user").filter(pk=id).first()
+
+    def resolve_blog_comments(self, info, post_slug=None, client_token=None, user_id=None, **kwargs):
+        qs = BlogComment.objects.select_related("post", "user")
+        is_staff = _is_staff_user(info)
+
+        if post_slug:
+            qs = qs.filter(post__slug=post_slug)
+
+        if not is_staff:
+            user = getattr(getattr(info, "context", None), "user", None)
+            auth_user_id = user.id if (user and getattr(user, "is_authenticated", False)) else user_id
+
+            conditions = Q(status=BlogCommentStatus.APPROVED)
+            if client_token:
+                conditions |= Q(client_token=client_token)
+            if auth_user_id:
+                try:
+                    _, auth_pk = from_global_id_or_error(str(auth_user_id), "User", raise_error=False)
+                    actual_user_id = int(auth_pk) if auth_pk else int(auth_user_id)
+                    conditions |= Q(user_id=actual_user_id)
+                except Exception:
+                    conditions |= Q(client_token=str(auth_user_id))
+            qs = qs.filter(conditions)
+
+        qs = filter_connection_queryset(qs, kwargs)
+
+        sort_by = kwargs.get("sort_by")
+        if sort_by:
+            direction = "-" if sort_by.direction == "DESC" else ""
+            field = sort_by.field
+            if field == "created_at":
+                qs = qs.order_by(f"{direction}created_at")
+            elif field == "status":
+                qs = qs.order_by(f"{direction}status", "-created_at")
+            elif field == "author_name":
+                qs = qs.order_by(f"{direction}author_name")
+        else:
+            qs = qs.order_by("-is_pinned", "-created_at")
+
+        return create_connection_slice(qs, info, kwargs, BlogCommentConnection)

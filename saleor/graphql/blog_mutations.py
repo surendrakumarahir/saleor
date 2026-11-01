@@ -16,6 +16,8 @@ from saleor.blog.models import (
     BlogAuditLog,
     BlogAuthor,
     BlogCategory,
+    BlogComment,
+    BlogCommentStatus,
     BlogPost,
     BlogPostFAQ,
     BlogPostRevision,
@@ -29,6 +31,8 @@ from saleor.graphql.blog_errors import BlogError, BlogErrorCode
 from saleor.graphql.blog_types import (
     BlogAuthorType,
     BlogCategoryType,
+    BlogCommentStatusEnum,
+    BlogCommentType,
     BlogPostRevisionType,
     BlogPostStatusEnum,
     BlogPostType,
@@ -979,6 +983,244 @@ class BlogAuthorDelete(graphene.Mutation):
         return BlogAuthorDelete(success=True, errors=[])
 
 
+def _is_staff(info):
+    context = getattr(info, "context", None)
+    if not context:
+        return False
+    user = getattr(context, "user", None)
+    if not user or not getattr(user, "is_authenticated", False):
+        return False
+    return bool(user.is_staff or user.has_perm("blog.manage_blog") or user.has_perm("page.manage_pages"))
+
+
+class BlogCommentCreateInput(graphene.InputObjectType):
+    post_id = graphene.ID(description="ID of the blog post.")
+    post_slug = graphene.String(description="Slug of the blog post.")
+    author_name = graphene.String(required=True, description="Name of the commenter.")
+    author_email = graphene.String(description="Email of the commenter.")
+    content = graphene.String(required=True, description="Comment text.")
+    parent_id = graphene.ID(description="Optional parent comment ID for replies.")
+    client_token = graphene.String(description="Client token for guest identification.")
+
+
+class BlogCommentCreate(graphene.Mutation):
+    comment = graphene.Field(BlogCommentType)
+    errors = graphene.List(BlogError, required=True)
+
+    class Arguments:
+        input = BlogCommentCreateInput(required=True)
+
+    def mutate(self, info, input):
+        data = _get_input_data(input)
+        post_id = data.get("post_id")
+        post_slug = data.get("post_slug")
+
+        post = None
+        if post_id:
+            pk = _parse_id(post_id, "BlogPost")
+            post = BlogPost.objects.filter(pk=pk).first()
+        elif post_slug:
+            post = BlogPost.objects.filter(slug=post_slug).first()
+
+        if not post:
+            return BlogCommentCreate(
+                comment=None,
+                errors=[BlogError(code=BlogErrorCode.NOT_FOUND, message="Blog post not found.", field="post_id")],
+            )
+
+        if not post.allow_comments:
+            return BlogCommentCreate(
+                comment=None,
+                errors=[BlogError(code=BlogErrorCode.COMMENTS_DISABLED, message="Comments are disabled for this article.", field="post")],
+            )
+
+        content = (data.get("content") or "").strip()
+        if len(content) < 3:
+            return BlogCommentCreate(
+                comment=None,
+                errors=[BlogError(code=BlogErrorCode.REQUIRED_FIELD_MISSING, message="Comment content must be at least 3 characters long.", field="content")],
+            )
+
+        author_name = (data.get("author_name") or "").strip()
+        if len(author_name) < 2:
+            return BlogCommentCreate(
+                comment=None,
+                errors=[BlogError(code=BlogErrorCode.REQUIRED_FIELD_MISSING, message="Author name must be at least 2 characters long.", field="author_name")],
+            )
+
+        author_email = (data.get("author_email") or "").strip()
+        client_token = (data.get("client_token") or "").strip()
+
+        parent = None
+        parent_id = data.get("parent_id")
+        if parent_id:
+            parent_pk = _parse_id(parent_id, "BlogComment")
+            parent = BlogComment.objects.filter(pk=parent_pk, post=post).first()
+
+        context = getattr(info, "context", None)
+        user = getattr(context, "user", None) if context else None
+        authenticated_user = user if (user and getattr(user, "is_authenticated", False)) else None
+
+        status = BlogCommentStatus.APPROVED if _is_staff(info) else BlogCommentStatus.PENDING
+
+        comment = BlogComment.objects.create(
+            post=post,
+            user=authenticated_user,
+            author_name=author_name,
+            author_email=author_email,
+            content=content,
+            status=status,
+            parent=parent,
+            client_token=client_token,
+        )
+
+        _log_audit(info, "CREATE", "BlogComment", comment.id, {"post": post.title, "author": author_name})
+        return BlogCommentCreate(comment=comment, errors=[])
+
+
+class BlogCommentStatusUpdate(graphene.Mutation):
+    comment = graphene.Field(BlogCommentType)
+    errors = graphene.List(BlogError, required=True)
+
+    class Arguments:
+        id = graphene.ID(required=True, description="Comment ID.")
+        status = BlogCommentStatusEnum(required=True, description="New status (PENDING, APPROVED, REJECTED).")
+
+    @one_of_permissions_required(BLOG_PERMISSIONS)
+    def mutate(self, info, id, status):
+        pk = _parse_id(id, "BlogComment")
+        comment = BlogComment.objects.select_related("post").filter(pk=pk).first()
+        if not comment:
+            return BlogCommentStatusUpdate(
+                comment=None,
+                errors=[BlogError(code=BlogErrorCode.NOT_FOUND, message="Comment not found.", field="id")],
+            )
+
+        comment.status = status
+        comment.save(update_fields=["status", "updated_at"])
+        _log_audit(info, "STATUS_CHANGE", "BlogComment", comment.id, {"status": status})
+        return BlogCommentStatusUpdate(comment=comment, errors=[])
+
+
+class BlogCommentBulkUpdateStatus(graphene.Mutation):
+    count = graphene.Int(required=True)
+    errors = graphene.List(BlogError, required=True)
+
+    class Arguments:
+        ids = graphene.List(graphene.ID, required=True, description="List of comment IDs.")
+        status = BlogCommentStatusEnum(required=True, description="New status.")
+
+    @one_of_permissions_required(BLOG_PERMISSIONS)
+    def mutate(self, info, ids, status):
+        pks = [_parse_id(i, "BlogComment") for i in ids if i]
+        updated_count = BlogComment.objects.filter(pk__in=pks).update(status=status)
+        _log_audit(info, "BULK_STATUS_CHANGE", "BlogComment", f"{len(pks)} items", {"status": status})
+        return BlogCommentBulkUpdateStatus(count=updated_count, errors=[])
+
+
+class BlogCommentUpdateInput(graphene.InputObjectType):
+    content = graphene.String(description="Updated comment content.")
+    status = BlogCommentStatusEnum(description="Updated moderation status (staff only).")
+    is_pinned = graphene.Boolean(description="Pinned status (staff only).")
+
+
+class BlogCommentUpdate(graphene.Mutation):
+    comment = graphene.Field(BlogCommentType)
+    errors = graphene.List(BlogError, required=True)
+
+    class Arguments:
+        id = graphene.ID(required=True)
+        input = BlogCommentUpdateInput(required=True)
+        client_token = graphene.String(description="Client token for guest author verification.")
+
+    def mutate(self, info, id, input, client_token=None):
+        pk = _parse_id(id, "BlogComment")
+        comment = BlogComment.objects.select_related("post").filter(pk=pk).first()
+        if not comment:
+            return BlogCommentUpdate(
+                comment=None,
+                errors=[BlogError(code=BlogErrorCode.NOT_FOUND, message="Comment not found.", field="id")],
+            )
+
+        is_staff_user = _is_staff(info)
+        context = getattr(info, "context", None)
+        user = getattr(context, "user", None) if context else None
+        is_user_author = bool(user and getattr(user, "is_authenticated", False) and comment.user_id == user.id)
+        is_token_author = bool(client_token and comment.client_token and comment.client_token == client_token)
+
+        if not (is_staff_user or is_user_author or is_token_author):
+            return BlogCommentUpdate(
+                comment=None,
+                errors=[BlogError(code=BlogErrorCode.PERMISSION_DENIED, message="You do not have permission to edit this comment.", field="id")],
+            )
+
+        data = _get_input_data(input)
+        if "content" in data and data["content"] is not None:
+            c = data["content"].strip()
+            if len(c) < 3:
+                return BlogCommentUpdate(
+                    comment=None,
+                    errors=[BlogError(code=BlogErrorCode.REQUIRED_FIELD_MISSING, message="Comment content must be at least 3 characters long.", field="content")],
+                )
+            comment.content = c
+
+        if is_staff_user:
+            if "status" in data and data["status"] is not None:
+                comment.status = data["status"]
+            if "is_pinned" in data and data["is_pinned"] is not None:
+                comment.is_pinned = data["is_pinned"]
+
+        comment.save()
+        _log_audit(info, "UPDATE", "BlogComment", comment.id)
+        return BlogCommentUpdate(comment=comment, errors=[])
+
+
+class BlogCommentDelete(graphene.Mutation):
+    success = graphene.Boolean(required=True)
+    errors = graphene.List(BlogError, required=True)
+
+    class Arguments:
+        id = graphene.ID(required=True)
+        client_token = graphene.String(description="Client token for guest verification.")
+
+    def mutate(self, info, id, client_token=None):
+        pk = _parse_id(id, "BlogComment")
+        comment = BlogComment.objects.filter(pk=pk).first()
+        if not comment:
+            return BlogCommentDelete(success=False, errors=[BlogError(code=BlogErrorCode.NOT_FOUND, message="Comment not found.", field="id")])
+
+        is_staff_user = _is_staff(info)
+        context = getattr(info, "context", None)
+        user = getattr(context, "user", None) if context else None
+        is_user_author = bool(user and getattr(user, "is_authenticated", False) and comment.user_id == user.id)
+        is_token_author = bool(client_token and comment.client_token and comment.client_token == client_token)
+
+        if not (is_staff_user or is_user_author or is_token_author):
+            return BlogCommentDelete(
+                success=False,
+                errors=[BlogError(code=BlogErrorCode.PERMISSION_DENIED, message="Permission denied to delete this comment.", field="id")],
+            )
+
+        comment.delete()
+        _log_audit(info, "DELETE", "BlogComment", pk)
+        return BlogCommentDelete(success=True, errors=[])
+
+
+class BlogCommentBulkDelete(graphene.Mutation):
+    count = graphene.Int(required=True)
+    errors = graphene.List(BlogError, required=True)
+
+    class Arguments:
+        ids = graphene.List(graphene.ID, required=True)
+
+    @one_of_permissions_required(BLOG_PERMISSIONS)
+    def mutate(self, info, ids):
+        pks = [_parse_id(i, "BlogComment") for i in ids if i]
+        deleted_count, _ = BlogComment.objects.filter(pk__in=pks).delete()
+        _log_audit(info, "BULK_DELETE", "BlogComment", f"{len(pks)} items")
+        return BlogCommentBulkDelete(count=deleted_count, errors=[])
+
+
 class BlogMutations(graphene.ObjectType):
     """All blog mutations exposed through GraphQL."""
 
@@ -1004,3 +1246,10 @@ class BlogMutations(graphene.ObjectType):
     blog_author_create = BlogAuthorCreate.Field()
     blog_author_update = BlogAuthorUpdate.Field()
     blog_author_delete = BlogAuthorDelete.Field()
+
+    blog_comment_create = BlogCommentCreate.Field()
+    blog_comment_status_update = BlogCommentStatusUpdate.Field()
+    blog_comment_bulk_update_status = BlogCommentBulkUpdateStatus.Field()
+    blog_comment_update = BlogCommentUpdate.Field()
+    blog_comment_delete = BlogCommentDelete.Field()
+    blog_comment_bulk_delete = BlogCommentBulkDelete.Field()

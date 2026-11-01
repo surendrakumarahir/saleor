@@ -24,3 +24,23 @@ class BlogPostSortingInput(SortInputObjectType):
         doc_category = DOC_CATEGORY_PAGES
         sort_enum = BlogPostSortField
         type_name = "blog posts"
+
+
+class BlogCommentSortField(BaseEnum):
+    CREATED_AT = ["created_at"]
+    STATUS = ["status", "created_at"]
+    AUTHOR_NAME = ["author_name", "created_at"]
+
+    class Meta:
+        doc_category = DOC_CATEGORY_PAGES
+
+    @property
+    def description(self):
+        return f"Sort blog comments by {self.name.lower().replace('_', ' ')}."
+
+
+class BlogCommentSortingInput(SortInputObjectType):
+    class Meta:
+        doc_category = DOC_CATEGORY_PAGES
+        sort_enum = BlogCommentSortField
+        type_name = "blog comments"

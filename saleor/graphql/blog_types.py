@@ -8,6 +8,8 @@ from saleor.blog.models import (
     BlogAuditLog,
     BlogAuthor,
     BlogCategory,
+    BlogComment,
+    BlogCommentStatus,
     BlogPost,
     BlogPostFAQ,
     BlogPostRevision,
@@ -38,6 +40,14 @@ class BlogPostStatusEnum(graphene.Enum):
     SCHEDULED = BlogPostStatus.SCHEDULED
     PUBLISHED = BlogPostStatus.PUBLISHED
     ARCHIVED = BlogPostStatus.ARCHIVED
+
+
+class BlogCommentStatusEnum(graphene.Enum):
+    """Enum representing moderation status of a blog comment."""
+
+    PENDING = BlogCommentStatus.PENDING
+    APPROVED = BlogCommentStatus.APPROVED
+    REJECTED = BlogCommentStatus.REJECTED
 
 
 class BlogAuthorType(graphene.ObjectType):
@@ -217,6 +227,18 @@ class BlogPostType(graphene.ObjectType):
     table_of_contents = JSON()
     product_collections = JSON()
     faqs = graphene.List(BlogPostFAQType)
+    comments = graphene.List(lambda: BlogCommentType)
+    comment_count = graphene.Int()
+
+    @staticmethod
+    def resolve_comments(root: BlogPost, _info):
+        return root.comments.filter(
+            status=BlogCommentStatus.APPROVED, parent__isnull=True
+        ).order_by("-is_pinned", "-created_at")
+
+    @staticmethod
+    def resolve_comment_count(root: BlogPost, _info):
+        return root.comments.filter(status=BlogCommentStatus.APPROVED).count()
 
     @staticmethod
     def resolve_faqs(root: BlogPost, _info):
@@ -299,3 +321,60 @@ class BlogTagConnection(CountableConnection):
 class BlogAuthorConnection(CountableConnection):
     class Meta:
         node = BlogAuthorType
+
+
+class BlogCommentType(graphene.ObjectType):
+    """GraphQL type for BlogComment."""
+
+    id = graphene.ID(required=True)
+    post_id = graphene.ID(required=True)
+    post_slug = graphene.String(required=True)
+    post_title = graphene.String(required=True)
+    author_name = graphene.String(required=True)
+    author_email = graphene.String()
+    content = graphene.String(required=True)
+    status = BlogCommentStatusEnum(required=True)
+    is_pinned = graphene.Boolean(required=True)
+    parent_id = graphene.ID()
+    user_id = graphene.ID()
+    client_token = graphene.String()
+    replies = graphene.List(lambda: BlogCommentType)
+    created_at = graphene.String(required=True)
+    updated_at = graphene.String()
+
+    @staticmethod
+    def resolve_post_id(root: BlogComment, _info):
+        return str(root.post_id) if root.post_id else None
+
+    @staticmethod
+    def resolve_post_slug(root: BlogComment, _info):
+        return root.post.slug if root.post else ""
+
+    @staticmethod
+    def resolve_post_title(root: BlogComment, _info):
+        return root.post.title if root.post else ""
+
+    @staticmethod
+    def resolve_parent_id(root: BlogComment, _info):
+        return str(root.parent_id) if root.parent_id else None
+
+    @staticmethod
+    def resolve_user_id(root: BlogComment, _info):
+        return str(root.user_id) if root.user_id else None
+
+    @staticmethod
+    def resolve_replies(root: BlogComment, _info):
+        return root.replies.filter(status=BlogCommentStatus.APPROVED).order_by("created_at")
+
+    @staticmethod
+    def resolve_created_at(root: BlogComment, _info):
+        return root.created_at.isoformat() if root.created_at else None
+
+    @staticmethod
+    def resolve_updated_at(root: BlogComment, _info):
+        return root.updated_at.isoformat() if root.updated_at else None
+
+
+class BlogCommentConnection(CountableConnection):
+    class Meta:
+        node = BlogCommentType

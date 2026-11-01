@@ -24,6 +24,18 @@ class BlogPostStatus:
     ]
 
 
+class BlogCommentStatus:
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+    CHOICES = [
+        (PENDING, "Pending"),
+        (APPROVED, "Approved"),
+        (REJECTED, "Rejected"),
+    ]
+
+
 class BlogAuthor(models.Model):
     """Author profile for blog articles."""
 
@@ -358,4 +370,54 @@ class BlogPostFAQ(models.Model):
 
     def __str__(self):
         return f"FAQ: {self.question[:50]} ({self.post.title})"
+
+
+class BlogComment(models.Model):
+    """User and visitor comments on blog posts."""
+
+    post = models.ForeignKey(
+        BlogPost,
+        on_delete=models.CASCADE,
+        related_name="comments",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="blog_comments",
+    )
+    author_name = models.CharField(max_length=255)
+    author_email = models.EmailField(max_length=254, blank=True)
+    content = models.TextField()
+    status = models.CharField(
+        max_length=32,
+        choices=BlogCommentStatus.CHOICES,
+        default=BlogCommentStatus.PENDING,
+        db_index=True,
+    )
+    parent = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="replies",
+    )
+    client_token = models.CharField(max_length=255, blank=True, default="", db_index=True)
+    is_pinned = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-is_pinned", "-created_at")
+        verbose_name = "Blog Comment"
+        verbose_name_plural = "Blog Comments"
+        indexes = [
+            models.Index(fields=["post", "status", "-created_at"]),
+            models.Index(fields=["status"]),
+            models.Index(fields=["client_token"]),
+        ]
+
+    def __str__(self):
+        return f"Comment by {self.author_name} on {self.post.title}"
 

@@ -3,7 +3,7 @@
 import django_filters
 from django.db.models import Q
 
-from saleor.blog.models import BlogCategory, BlogPost
+from saleor.blog.models import BlogCategory, BlogComment, BlogPost
 from saleor.graphql.core.doc_category import DOC_CATEGORY_PAGES
 from saleor.graphql.core.filters import FilterInputObjectType
 
@@ -62,3 +62,36 @@ class BlogCategoryFilterInput(FilterInputObjectType):
     class Meta:
         doc_category = DOC_CATEGORY_PAGES
         filterset_class = BlogCategoryFilter
+
+
+class BlogCommentFilter(django_filters.FilterSet):
+    """Filters for BlogComment."""
+
+    search = django_filters.CharFilter(method="filter_search")
+    status = django_filters.CharFilter(field_name="status")
+    post_slug = django_filters.CharFilter(field_name="post__slug")
+    post_id = django_filters.CharFilter(field_name="post__id")
+    is_pinned = django_filters.BooleanFilter(field_name="is_pinned")
+
+    class Meta:
+        model = BlogComment
+        fields = ("search", "status", "post_slug", "post_id", "is_pinned")
+
+    def filter_search(self, queryset, _name, value):
+        if not value:
+            return queryset
+        return queryset.filter(
+            Q(author_name__icontains=value)
+            | Q(author_email__icontains=value)
+            | Q(content__icontains=value)
+            | Q(post__title__icontains=value)
+            | Q(post__slug__icontains=value)
+        )
+
+
+class BlogCommentFilterInput(FilterInputObjectType):
+    """Filter input for blog comments."""
+
+    class Meta:
+        doc_category = DOC_CATEGORY_PAGES
+        filterset_class = BlogCommentFilter
