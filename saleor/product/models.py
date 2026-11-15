@@ -7,7 +7,7 @@ import graphene
 from django.conf import settings
 from django.contrib.postgres.indexes import BTreeIndex, GinIndex
 from django.contrib.postgres.search import SearchVectorField
-from django.core.validators import MinValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models, transaction
 from django.db.models import JSONField, TextField
 from django.utils import timezone
@@ -734,3 +734,68 @@ class CollectionTranslation(SeoModelTranslationWithSlug):
             }
         )
         return translated_keys
+
+
+class ProductReviewStatus:
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+    CHOICES = [
+        (PENDING, "Pending"),
+        (APPROVED, "Approved"),
+        (REJECTED, "Rejected"),
+    ]
+
+
+class ProductReview(models.Model):
+    """User and customer reviews on products."""
+
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name="reviews",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="product_reviews",
+    )
+    user_name = models.CharField(max_length=255)
+    user_email = models.EmailField(max_length=254, blank=True)
+    rating = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(5)],
+        default=5,
+    )
+    title = models.CharField(max_length=255, blank=True, default="")
+    content = models.TextField()
+    status = models.CharField(
+        max_length=32,
+        choices=ProductReviewStatus.CHOICES,
+        default=ProductReviewStatus.PENDING,
+        db_index=True,
+    )
+    is_verified_buyer = models.BooleanField(default=False)
+    images = models.JSONField(blank=True, default=list)
+    helpful_count = models.PositiveIntegerField(default=0)
+    admin_reply = models.TextField(blank=True, default="")
+    admin_replied_at = models.DateTimeField(null=True, blank=True)
+    client_token = models.CharField(max_length=255, blank=True, default="", db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        verbose_name = "Product Review"
+        verbose_name_plural = "Product Reviews"
+        indexes = [
+            models.Index(fields=["product", "status"]),
+            models.Index(fields=["rating"]),
+            models.Index(fields=["created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.rating}★ Review by {self.user_name} on {self.product.name}"
+

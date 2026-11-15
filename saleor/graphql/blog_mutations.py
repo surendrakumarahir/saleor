@@ -1,5 +1,6 @@
 """GraphQL mutations for Blog Management System."""
 
+import datetime
 import json
 import posixpath
 import re
@@ -8,7 +9,7 @@ import graphene
 from django.core.exceptions import ValidationError
 from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import UploadedFile
-from django.db import transaction
+from django.db import models, transaction
 from django.utils import timezone
 from django.utils.text import slugify
 
@@ -22,6 +23,7 @@ from saleor.blog.models import (
     BlogPostFAQ,
     BlogPostRevision,
     BlogPostStatus,
+    BlogPostView,
     BlogRedirect,
     BlogTag,
 )
@@ -1221,9 +1223,73 @@ class BlogCommentBulkDelete(graphene.Mutation):
         return BlogCommentBulkDelete(count=deleted_count, errors=[])
 
 
+class BlogPostRecordView(graphene.Mutation):
+    """Record a visitor view for a blog article with 24-hour unique deduplication."""
+
+    success = graphene.Boolean(required=True)
+    slug = graphene.String()
+    views = graphene.Int()
+    is_unique = graphene.Boolean()
+    errors = graphene.List(BlogError, required=True)
+
+    class Arguments:
+        slug = graphene.String(required=True, description="Slug of the blog article.")
+        visitor_hash = graphene.String(required=True, description="Visitor device fingerprint hash.")
+
+    def mutate(self, info, slug, visitor_hash):
+        post = BlogPost.objects.filter(slug=slug).first()
+        if not post:
+            return BlogPostRecordView(
+                success=False,
+                slug=slug,
+                views=0,
+                is_unique=False,
+                errors=[
+                    BlogError(
+                        code=BlogErrorCode.NOT_FOUND,
+                        message=f"Blog post with slug '{slug}' not found.",
+                        field="slug",
+                    )
+                ],
+            )
+
+        now = timezone.now()
+        cooldown_threshold = now - datetime.timedelta(hours=24)
+
+        # Check if visitor viewed this post within the last 24 hours
+        recent_view = BlogPostView.objects.filter(
+            post=post,
+            visitor_hash=visitor_hash,
+            viewed_at__gte=cooldown_threshold,
+        ).first()
+
+        if recent_view:
+            return BlogPostRecordView(
+                success=True,
+                slug=slug,
+                views=post.views_count,
+                is_unique=False,
+                errors=[],
+            )
+
+        # Record unique view
+        BlogPostView.objects.create(post=post, visitor_hash=visitor_hash)
+        BlogPost.objects.filter(pk=post.pk).update(views_count=models.F("views_count") + 1)
+        post.refresh_from_db(fields=["views_count"])
+
+        return BlogPostRecordView(
+            success=True,
+            slug=slug,
+            views=post.views_count,
+            is_unique=True,
+            errors=[],
+        )
+
+
 class BlogMutations(graphene.ObjectType):
     """All blog mutations exposed through GraphQL."""
 
+    blog_post_record_view = BlogPostRecordView.Field()
     blog_post_create = BlogPostCreate.Field()
     blog_post_update = BlogPostUpdate.Field()
     blog_post_delete = BlogPostDelete.Field()

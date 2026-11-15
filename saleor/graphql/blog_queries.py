@@ -36,6 +36,7 @@ from saleor.graphql.blog_types import (
     BlogPostType,
     BlogTagConnection,
     BlogTagType,
+    BlogViewsSummary,
 )
 from saleor.graphql.core.connection import (
     create_connection_slice,
@@ -140,6 +141,12 @@ class BlogQueries(graphene.ObjectType):
         client_token=graphene.String(description="Client token for guest identification."),
         user_id=graphene.ID(description="User ID for commenter identification."),
         description="Retrieve a list of blog comments.",
+    )
+
+    blog_views = graphene.Field(
+        BlogViewsSummary,
+        slug=graphene.String(description="Filter views by article slug."),
+        description="Retrieve total blog views or views for a specific article.",
     )
 
     def resolve_blog_post(self, info, id=None, slug=None):
@@ -334,3 +341,27 @@ class BlogQueries(graphene.ObjectType):
             qs = qs.order_by("-is_pinned", "-created_at")
 
         return create_connection_slice(qs, info, kwargs, BlogCommentConnection)
+
+    def resolve_blog_views(self, info, slug=None):
+        if slug:
+            post = BlogPost.objects.filter(slug=slug).first()
+            views = (post.views_count or 0) if post else 0
+            return BlogViewsSummary(
+                success=True,
+                slug=slug,
+                views=views,
+                total_views=views,
+                views_map={slug: views} if post else {},
+            )
+
+        posts = list(BlogPost.objects.all().values("slug", "views_count"))
+        views_map = {p["slug"]: (p["views_count"] or 0) for p in posts}
+        total_views = sum(views_map.values())
+
+        return BlogViewsSummary(
+            success=True,
+            slug=None,
+            views=total_views,
+            total_views=total_views,
+            views_map=views_map,
+        )

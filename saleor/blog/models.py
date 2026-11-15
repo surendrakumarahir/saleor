@@ -225,6 +225,7 @@ class BlogPost(models.Model):
     recommended_books = models.JSONField(default=list, blank=True)
     table_of_contents = models.JSONField(default=list, blank=True)
     product_collections = models.JSONField(default=list, blank=True)
+    views_count = models.PositiveIntegerField(default=0, db_index=True)
 
     class Meta:
         ordering = ("-published_at", "-created_at")
@@ -420,4 +421,28 @@ class BlogComment(models.Model):
 
     def __str__(self):
         return f"Comment by {self.author_name} on {self.post.title}"
+
+
+class BlogPostView(models.Model):
+    """Tracks visitor views for deduplication (1 view per device/user per 24 hours)."""
+
+    post = models.ForeignKey(
+        BlogPost,
+        on_delete=models.CASCADE,
+        related_name="views",
+    )
+    visitor_hash = models.CharField(max_length=64, db_index=True)
+    viewed_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ("-viewed_at",)
+        verbose_name = "Blog Post View"
+        verbose_name_plural = "Blog Post Views"
+        indexes = [
+            models.Index(fields=["post", "visitor_hash", "-viewed_at"]),
+        ]
+
+    def __str__(self):
+        return f"View on {self.post.title} by {self.visitor_hash[:8]} at {self.viewed_at}"
+
 

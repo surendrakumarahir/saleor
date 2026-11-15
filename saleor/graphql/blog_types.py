@@ -229,6 +229,11 @@ class BlogPostType(graphene.ObjectType):
     faqs = graphene.List(BlogPostFAQType)
     comments = graphene.List(lambda: BlogCommentType)
     comment_count = graphene.Int()
+    views_count = graphene.Int(description="Total view count for this blog post.")
+
+    @staticmethod
+    def resolve_views_count(root: BlogPost, _info):
+        return root.views_count or 0
 
     @staticmethod
     def resolve_comments(root: BlogPost, _info):
@@ -378,3 +383,14 @@ class BlogCommentType(graphene.ObjectType):
 class BlogCommentConnection(CountableConnection):
     class Meta:
         node = BlogCommentType
+
+
+class BlogViewsSummary(graphene.ObjectType):
+    """Summary of blog views."""
+
+    success = graphene.Boolean(required=True)
+    slug = graphene.String()
+    views = graphene.Int()
+    total_views = graphene.Int()
+    views_map = JSON()
+
