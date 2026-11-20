@@ -1,0 +1,32 @@
+services:
+  typesense:
+    image: typesense/typesense:27.1
+    container_name: easytopick-typesense
+    restart: unless-stopped
+    ports:
+      - "${TYPESENSE_PORT:-8108}:8108"
+    environment:
+      - TYPESENSE_DATA_DIR=/data
+      - TYPESENSE_API_KEY=${TYPESENSE_API_KEY:-easytopick_typesense_admin_secret_key_2026}
+      - TYPESENSE_ENABLE_CORS=true
+      - TYPESENSE_LOG_LEVEL=info
+    volumes:
+      - typesense_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8108/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - easytopick_search_net
+
+volumes:
+  typesense_data:
+    name: easytopick_typesense_data
+    driver: local
+
+networks:
+  easytopick_search_net:
+    name: easytopick_search_net
+    driver: bridge
