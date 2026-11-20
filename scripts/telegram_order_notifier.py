@@ -90,19 +90,34 @@ query GetRecentOrders {
         billingAddress {
           firstName
           lastName
-          phone
+          companyName
+          streetAddress1
+          streetAddress2
           city
+          cityArea
           countryArea
           postalCode
+          phone
+          country {
+            code
+            country
+          }
         }
         shippingAddress {
           firstName
           lastName
-          phone
+          companyName
           streetAddress1
+          streetAddress2
           city
+          cityArea
           countryArea
           postalCode
+          phone
+          country {
+            code
+            country
+          }
         }
         total {
           gross {
@@ -216,9 +231,65 @@ def format_order_message(order):
     first_name = addr.get("firstName") or ""
     last_name = addr.get("lastName") or ""
     customer_name = f"{first_name} {last_name}".strip() or "Guest Customer"
-    phone = addr.get("phone") or "Not provided"
+    phone = addr.get("phone") or (order.get("billingAddress") or {}).get("phone") or "Not provided"
     email = order.get("userEmail") or "Not provided"
-    city = ", ".join(filter(None, [addr.get("city"), addr.get("countryArea")])) or "N/A"
+
+    # Address components
+    company = (addr.get("companyName") or "").strip()
+    street1 = (addr.get("streetAddress1") or "").strip()
+    street2 = (addr.get("streetAddress2") or "").strip()
+    city = (addr.get("city") or "").strip()
+    city_area = (addr.get("cityArea") or "").strip()
+    state = (addr.get("countryArea") or "").strip()
+    pincode = (addr.get("postalCode") or "").strip()
+
+    # Build street details
+    street_parts = []
+    if street1:
+        street_parts.append(street1)
+    if street2:
+        street_parts.append(street2)
+    street_address_str = ", ".join(street_parts)
+
+    # Complete address formatted string for 1-tap copy
+    full_addr_parts = []
+    if company:
+        full_addr_parts.append(company)
+    if street1:
+        full_addr_parts.append(street1)
+    if street2:
+        full_addr_parts.append(street2)
+    if city_area and city_area.lower() not in (street1.lower(), street2.lower()):
+        full_addr_parts.append(city_area)
+    if city:
+        full_addr_parts.append(city)
+    if state:
+        full_addr_parts.append(state)
+    if pincode:
+        full_addr_parts.append(f"PIN: {pincode}")
+
+    full_address_str = ", ".join(full_addr_parts) if full_addr_parts else ""
+
+    address_lines_formatted = []
+    if street_address_str:
+        address_lines_formatted.append(f"• <b>Address:</b> {escape_html(street_address_str)}")
+    if company:
+        address_lines_formatted.append(f"• <b>Company / Landmark:</b> {escape_html(company)}")
+    if city_area and city_area.lower() not in street_address_str.lower():
+        address_lines_formatted.append(f"• <b>Area:</b> {escape_html(city_area)}")
+    if city:
+        address_lines_formatted.append(f"• <b>City:</b> {escape_html(city)}")
+    if state:
+        address_lines_formatted.append(f"• <b>State:</b> {escape_html(state)}")
+    if pincode:
+        address_lines_formatted.append(f"• <b>PIN Code:</b> <code>{escape_html(pincode)}</code>")
+    if full_address_str:
+        address_lines_formatted.append(f"• <b>Complete Address (Tap to copy):</b>\n  <code>{escape_html(full_address_str)}</code>")
+
+    if not address_lines_formatted:
+        address_lines_formatted.append("• <i>No delivery address provided</i>")
+
+    address_section = "\n".join(address_lines_formatted)
 
     lines = order.get("lines", [])
     if lines:
@@ -251,7 +322,9 @@ def format_order_message(order):
 • <b>Name:</b> {escape_html(customer_name)}
 • <b>Phone:</b> <code>{escape_html(phone)}</code>
 • <b>Email:</b> {escape_html(email)}
-• <b>Location:</b> {escape_html(city)}
+
+📍 <b>Delivery Address:</b>
+{address_section}
 
 🛒 <b>Ordered Items ({len(lines)}):</b>
 {items_list}
@@ -449,8 +522,13 @@ def run_test():
             "firstName": "Rahul",
             "lastName": "Sharma",
             "phone": "+91 98765 43210",
-            "city": "New Delhi",
-            "countryArea": "Delhi",
+            "companyName": "Tech Park Tower 3",
+            "streetAddress1": "Flat 402, Sunshine Apartments, MG Road",
+            "streetAddress2": "Near Central Mall, Indiranagar",
+            "city": "Bengaluru",
+            "cityArea": "Indiranagar",
+            "countryArea": "Karnataka",
+            "postalCode": "560038",
         },
         "total": {"gross": {"amount": 1499.0, "currency": "INR"}},
         "lines": [
