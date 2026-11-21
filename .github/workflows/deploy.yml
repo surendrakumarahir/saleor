@@ -1,0 +1,53 @@
+name: Deploy Saleor Core to Hostinger VPS
+
+on:
+  push:
+    branches:
+      - dev
+      - main
+
+jobs:
+  deploy:
+    name: Deploy to Production VPS
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT || 22 }}
+          script: |
+            set -e
+
+            echo "🚀 Starting automated deployment for branch: ${{ github.ref_name }}..."
+            cd /app/saleor
+
+            # 1. Fetch latest commits and checkout the pushed branch
+            echo "📥 Fetching latest changes from git..."
+            git fetch origin ${{ github.ref_name }}
+            git checkout ${{ github.ref_name }}
+            git reset --hard origin/${{ github.ref_name }}
+
+            # 2. Identify the active docker compose file
+            if [ -f "docker-compose.prod.yml" ]; then
+              COMPOSE_FILE="docker-compose.prod.yml"
+            else
+              COMPOSE_FILE="docker-compose.yml"
+            fi
+            echo "📦 Using Compose configuration: $COMPOSE_FILE"
+
+            # 3. Rebuild and restart API, Worker, and Telegram Notifier
+            echo "🔨 Rebuilding and restarting Saleor services..."
+            docker compose -f "$COMPOSE_FILE" up -d --build
+
+            # 4. Clean unused Docker images to save VPS disk space
+            echo "🧹 Cleaning up old Docker images..."
+            docker image prune -f
+
+            echo "✅ Saleor Core deployment completed successfully! API is live."
