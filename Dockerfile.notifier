@@ -1,0 +1,9 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Copy the script and the environment file from host
+COPY scripts/telegram_order_notifier.py /app/scripts/telegram_order_notifier.py
+
+# Run standard watcher (use -u to disable buffering of stdout/stderr)
+CMD ["python", "-u", "scripts/telegram_order_notifier.py"]

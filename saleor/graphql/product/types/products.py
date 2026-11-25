@@ -16,7 +16,7 @@ from ....core.weight import convert_weight_to_default_weight_unit
 from ....permission.auth_filters import AuthorizationFilters
 from ....permission.enums import OrderPermissions, ProductPermissions
 from ....permission.utils import has_one_of_permissions
-from ....product import models
+from ....product import ProductMediaTypes, models
 from ....product.models import ALL_PRODUCTS_PERMISSIONS
 from ....product.utils import calculate_revenue_for_variant
 from ....product.utils.availability import (
@@ -31,6 +31,7 @@ from ....tax.utils import (
 )
 from ....thumbnail.utils import (
     get_image_or_proxy_url,
+    get_original_image_proxy_url,
     get_thumbnail_format,
     get_thumbnail_size,
 )
@@ -167,7 +168,6 @@ from ..resolvers import (
 )
 from ..sorters import MediaSortingInput, ProductVariantSortingInput
 from .channels import ProductChannelListing, ProductVariantChannelListing
-from .digital_contents import DigitalContent
 
 destination_address_argument = graphene.Argument(
     account_types.AddressInput,
@@ -405,11 +405,6 @@ class ProductVariant(ChannelContextType[models.ProductVariant]):
         type_name="product variant",
         resolver=ChannelContextType.resolve_translation,
     )
-    digital_content = PermissionsField(
-        DigitalContent,
-        description="Digital content for the product variant.",
-        permissions=[ProductPermissions.MANAGE_PRODUCTS],
-    )
     stocks = PermissionsField(
         NonNullList(Stock),
         description="Stocks for the product variant.",
@@ -614,10 +609,6 @@ class ProductVariant(ChannelContextType[models.ProductVariant]):
         return AvailableQuantityByProductVariantIdCountryCodeAndChannelSlugLoader(
             info.context
         ).load((root.node.id, country_code, channel_slug))
-
-    @staticmethod
-    def resolve_digital_content(root: ChannelContext[models.ProductVariant], _info):
-        return getattr(root.node, "digital_content", None)
 
     @classmethod
     def resolve_assigned_attribute(
@@ -1747,7 +1738,14 @@ class ProductType(ModelObjectType[models.ProductType]):
         required=True, description="Whether shipping is required for this product type."
     )
     is_digital = graphene.Boolean(
-        required=True, description="Whether the product type is digital."
+        required=True,
+        description=(
+            "Whether the product type is digital - doesn't have any effect, "
+            "it's present for backward-compatibility."
+        ),
+        deprecation_reason=(
+            "Will be removed in v3.24.0, use metadata or attributes instead."
+        ),
     )
     weight = graphene.Field(Weight, description="Weight of the product type.")
     kind = ProductTypeKindEnum(description="The product type kind.", required=True)
@@ -2046,15 +2044,22 @@ class ProductMedia(ModelObjectType[models.ProductMedia]):
         size: int | None = None,
         format: str | None = None,
     ) -> str | None | Promise[str]:
-        if root.external_url:
+        if root.external_url and root.type != ProductMediaTypes.IMAGE:
             return root.external_url
 
-        if not root.image:
-            return None
-
-        if size == 0:
+        # Bypass proxy URL when image is already in-place and original size is
+        # requested.
+        if root.image and size == 0:
             return build_absolute_uri(root.image.url)
 
+        # If image is not there yet and original size is requested return proxy URL for
+        # original.
+        if size == 0:
+            return build_absolute_uri(
+                get_original_image_proxy_url(str(root.id), "ProductMedia")
+            )
+
+        # Else, return proxy URL for thumbnail.
         format = get_thumbnail_format(format)
         selected_size = get_thumbnail_size(size)
 

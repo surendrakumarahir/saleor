@@ -85,9 +85,20 @@ class SitePermissions(BasePermissionEnum):
     MANAGE_TRANSLATIONS = "site.manage_translations"
 
 
+class BannerPermissions(BasePermissionEnum):
+    MANAGE_BANNERS = "banner.manage_banners"
+
+
+class BlogPermissions(BasePermissionEnum):
+    MANAGE_BLOG = "blog.manage_blog"
+    PUBLISH_BLOG = "blog.publish_blog"
+
+
 PERMISSIONS_ENUMS = [
     AccountPermissions,
     AppPermission,
+    BannerPermissions,
+    BlogPermissions,
     CheckoutPermissions,
     ChannelPermissions,
     DiscountPermissions,

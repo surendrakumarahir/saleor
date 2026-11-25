@@ -5,6 +5,7 @@
 !.github
 !.gitignore
 !.vscode
+!.semgrep/
 *.log
 *.pot
 *.pyc
@@ -20,7 +21,6 @@ dist/
 /media/
 /node_modules/
 /static/
-/digital_contents/
 # Environments
 .env
 .venv

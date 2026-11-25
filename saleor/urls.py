@@ -12,8 +12,12 @@ from .plugins.views import (
     handle_plugin_per_channel_webhook,
     handle_plugin_webhook,
 )
-from .product.views import digital_product
-from .thumbnail.views import handle_thumbnail
+from .product.amazon_views import (
+    amazon_extract_view,
+    amazon_health_view,
+    amazon_image_proxy_view,
+)
+from .thumbnail.views import handle_original_image, handle_thumbnail
 
 urlpatterns = [
     re_path(
@@ -22,9 +26,19 @@ urlpatterns = [
         name="api",
     ),
     re_path(
-        r"^digital-download/(?P<token>[0-9A-Za-z_\-]+)/$",
-        digital_product,
-        name="digital-product",
+        r"^api/amazon-extract/?$",
+        amazon_extract_view,
+        name="amazon-extract",
+    ),
+    re_path(
+        r"^api/amazon-image-proxy/?$",
+        amazon_image_proxy_view,
+        name="amazon-image-proxy",
+    ),
+    re_path(
+        r"^api/amazon-health/?$",
+        amazon_health_view,
+        name="amazon-health",
     ),
     re_path(
         r"^plugins/channel/(?P<channel_slug>[.0-9A-Za-z_\-]+)/"
@@ -49,6 +63,11 @@ urlpatterns = [
         ),
         handle_thumbnail,
         name="thumbnail",
+    ),
+    re_path(
+        (r"^image/(?P<instance_id>[.0-9A-Za-z_=\-]+)/$"),
+        handle_original_image,
+        name="original-image",
     ),
     re_path(r"^\.well-known/jwks.json$", jwks, name="jwks"),
 ]
